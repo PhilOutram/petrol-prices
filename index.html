@@ -1,17 +1,14 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FuelScan — Find Cheap Fuel Near You</title>
 
-  <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
-  <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
-
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -20,52 +17,58 @@
   <header class="header">
     <div class="header-brand">
       <div class="brand-icon">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 22V8l9-6 9 6v14H3z"/><path d="M9 22V12h6v10"/><path d="M19 8h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1"/>
-          <line x1="19" y1="12" x2="19" y2="17"/><circle cx="19" cy="17" r="1"/>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 22V8l9-6 9 6v14H3z"/><path d="M9 22V12h6v10"/>
+          <path d="M19 8h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1"/><line x1="19" y1="12" x2="19" y2="17"/><circle cx="19" cy="17" r="1"/>
         </svg>
       </div>
       <span class="brand-name">FuelScan</span>
       <span class="brand-tag">UK Fuel Price Finder</span>
     </div>
-    <div class="header-meta">
-      <span class="data-badge">
+
+    <div class="header-right">
+      <div class="data-badge">
         <span class="pulse-dot"></span>
-        Official Gov Fuel Finder Data
-      </span>
-      <span id="last-updated" class="last-updated">—</span>
+        Live Gov Data
+      </div>
+      <span id="last-updated" class="last-updated"></span>
+
+      <!-- THEME TOGGLE -->
+      <button id="theme-toggle" class="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle theme">
+        <!-- Moon (shown in dark mode) -->
+        <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/>
+        </svg>
+        <!-- Sun (shown in light mode) -->
+        <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5"/>
+          <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+          <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+      </button>
     </div>
   </header>
 
   <!-- ===== SEARCH BAR ===== -->
   <section class="search-section">
     <div class="search-container">
-
-      <!-- Location Controls -->
       <div class="location-group">
-        <button id="btn-gps" class="btn-location active" title="Use my GPS location">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <button id="btn-gps" class="btn-location" title="Use my GPS location">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/>
           </svg>
           Use GPS
         </button>
-
         <span class="divider-or">or</span>
-
         <div class="postcode-wrap">
-          <input
-            id="postcode-input"
-            class="postcode-input"
-            type="text"
-            placeholder="Enter postcode (e.g. SW1A 1AA)"
-            maxlength="8"
-            autocomplete="postal-code"
-          />
+          <input id="postcode-input" class="postcode-input" type="text"
+            placeholder="Postcode (e.g. SW1A 1AA)" maxlength="8" autocomplete="postal-code" />
           <button id="btn-postcode" class="btn-search">Search</button>
         </div>
       </div>
 
-      <!-- Radius + Fuel Filters -->
       <div class="filter-group">
         <div class="filter-item">
           <label class="filter-label">Radius</label>
@@ -76,15 +79,13 @@
             <option value="20">20 miles</option>
           </select>
         </div>
-
         <div class="filter-item">
           <label class="filter-label">Fuel Type</label>
           <div class="fuel-toggle-group">
-            <button id="fuel-petrol" class="fuel-toggle active" data-fuel="petrol">⛽ Petrol</button>
-            <button id="fuel-diesel" class="fuel-toggle" data-fuel="diesel">🛢 Diesel</button>
+            <button class="fuel-toggle active" data-fuel="petrol">Petrol</button>
+            <button class="fuel-toggle" data-fuel="diesel">Diesel</button>
           </div>
         </div>
-
         <div class="filter-item">
           <label class="filter-label">Sort By</label>
           <select id="sort-select" class="filter-select">
@@ -93,47 +94,36 @@
           </select>
         </div>
       </div>
-
     </div>
   </section>
 
-  <!-- ===== STATUS BAR ===== -->
+  <!-- ===== STATUS / ERROR BARS ===== -->
   <div id="status-bar" class="status-bar hidden">
-    <div class="status-inner">
-      <div class="spinner"></div>
-      <span id="status-text">Locating you...</span>
-    </div>
+    <div class="status-inner"><div class="spinner"></div><span id="status-text">Loading...</span></div>
   </div>
-
-  <!-- ===== ERROR BAR ===== -->
   <div id="error-bar" class="error-bar hidden">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-    <span id="error-text">An error occurred.</span>
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    <span id="error-text"></span>
     <button id="error-dismiss" class="error-dismiss">✕</button>
   </div>
 
-  <!-- ===== MAIN DASHBOARD ===== -->
-  <main class="dashboard" id="dashboard">
-
-    <!-- MAP PANEL -->
+  <!-- ===== DASHBOARD ===== -->
+  <main class="dashboard">
     <section class="map-panel">
       <div id="map"></div>
       <div class="map-legend">
         <span class="legend-item"><span class="legend-dot cheapest"></span>Cheapest</span>
         <span class="legend-item"><span class="legend-dot mid"></span>Mid</span>
-        <span class="legend-item"><span class="legend-dot expensive"></span>Pricey</span>
-        <span class="legend-item"><span class="legend-dot user"></span>You</span>
+        <span class="legend-item"><span class="legend-dot pricey"></span>Pricey</span>
+        <span class="legend-item"><span class="legend-dot you"></span>You</span>
       </div>
     </section>
 
-    <!-- LIST PANEL -->
     <section class="list-panel">
       <div class="list-header">
         <h2 class="list-title">Nearby Stations</h2>
         <span id="result-count" class="result-count">—</span>
       </div>
-
-      <!-- Summary Stats -->
       <div id="stats-row" class="stats-row hidden">
         <div class="stat-card">
           <div class="stat-label">Cheapest</div>
@@ -148,8 +138,6 @@
           <div id="stat-expensive" class="stat-value red">—p</div>
         </div>
       </div>
-
-      <!-- Station List -->
       <div id="station-list" class="station-list">
         <div class="empty-state">
           <div class="empty-icon">⛽</div>
@@ -157,16 +145,13 @@
         </div>
       </div>
     </section>
-
   </main>
 
-  <!-- ===== FOOTER ===== -->
   <footer class="footer">
     <span>Powered by the UK Government <a href="https://www.gov.uk/guidance/access-the-latest-fuel-prices-and-forecourt-data-via-api-or-email" target="_blank" rel="noopener">Fuel Finder Scheme</a></span>
-    <span>Prices updated within 30 mins of change · Always verify at the forecourt</span>
+    <span>Prices updated within 30 mins · Always verify at the forecourt</span>
   </footer>
 
-  <!-- Leaflet JS -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="app.js"></script>
 </body>
