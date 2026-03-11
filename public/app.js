@@ -8,8 +8,8 @@
    In Vercel, /api/fuel is relative so no change needed.
    ---------------------------------------------------------------- */
 const CONFIG = {
-  PROXY_URL:  '/api/fuel',       // Vercel serverless function
-  DEMO_MODE:  false,             // set true to use synthetic data (no credentials needed)
+  PROXY_URL:  '/api/fuel',  // Vercel serverless function
+  DEMO_MODE:  false,        // set true to use synthetic data (no credentials needed)
 };
 
 const POSTCODES_API = 'https://api.postcodes.io/postcodes/';
