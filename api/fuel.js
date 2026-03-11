@@ -1,116 +1,156 @@
-// api/fuel-csv.js — Vercel Serverless Function
-// Fetches the official UK Gov Fuel Finder CSV (updated twice daily),
-// parses it in memory, filters by user location and returns results.
-// Much faster than the batch API — single request, no pagination.
+// api/fuel.js — Vercel Serverless Function
+// UK Gov Fuel Finder API — correct endpoints from developer portal docs.
+// Secrets stored in Vercel Environment Variables, never exposed to browser.
 
 const https = require('https');
 
-// ----------------------------------------------------------------
-// UPDATE THIS URL once confirmed from the developer portal.
-// It will be something like:
-// https://www.fuel-finder.service.gov.uk/api/v1/fuel-prices.csv
-// ----------------------------------------------------------------
-const CSV_URL = 'https://www.fuel-finder.service.gov.uk/api/v1/fuel-prices.csv';
+const API_BASE   = 'https://www.fuel-finder.service.gov.uk';
+const TOKEN_URL  = `${API_BASE}/api/v1/oauth/generate_access_token`;
+const PRICES_URL = `${API_BASE}/api/v1/pfs/fuel-prices`;
 
-// In-memory cache — persists for the lifetime of the function instance
-let csvCache      = null;
-let csvCachedAt   = 0;
-const CSV_TTL_MS  = 60 * 60 * 1000; // 1 hour (CSV updates twice daily)
+// In-memory cache for token and station data
+let cachedToken      = null;
+let tokenExpiry      = 0;
+let cachedStations   = null;
+let stationsCachedAt = 0;
+const STATIONS_TTL_MS = 5 * 60 * 1000; // cache all stations for 5 minutes
 
 /* ----------------------------------------------------------------
-   https GET helper
+   https request helper — returns { status, body }
+   Sends JSON body when postBody is an object, raw string otherwise.
    ---------------------------------------------------------------- */
-function httpsGet(urlStr) {
+function httpsRequest(urlStr, options = {}, postBody = null) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlStr);
-    const options = {
+    const isJson = postBody && typeof postBody === 'object';
+    const bodyStr = isJson ? JSON.stringify(postBody) : (postBody || null);
+
+    const headers = { ...(options.headers || {}) };
+    if (bodyStr) {
+      headers['Content-Type']   = isJson ? 'application/json' : 'application/x-www-form-urlencoded';
+    }
+
+    const reqOptions = {
       hostname: url.hostname,
       path:     url.pathname + url.search,
-      method:   'GET',
-      headers: {
-        'Accept':     'text/csv,application/csv,*/*',
-        'User-Agent': 'FuelScan/1.0',
-      },
+      method:   options.method || 'GET',
+      headers,
     };
-    const req = https.request(options, res => {
-      // Handle redirects
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return httpsGet(res.headers.location).then(resolve).catch(reject);
-      }
+
+    const req = https.request(reqOptions, res => {
       let data = '';
       res.on('data', chunk => { data += chunk; });
       res.on('end', () => resolve({ status: res.statusCode, body: data }));
     });
+
     req.on('error', reject);
+    if (bodyStr) req.write(bodyStr);
     req.end();
   });
 }
 
 /* ----------------------------------------------------------------
-   Parse CSV into array of objects.
-   Handles quoted fields and standard comma separation.
+   OAuth — POST JSON body as per portal docs
    ---------------------------------------------------------------- */
-function parseCSV(text) {
-  const lines = text.trim().split('\n');
-  if (lines.length < 2) return [];
+async function getAccessToken() {
+  if (cachedToken && Date.now() < tokenExpiry - 60000) return cachedToken;
 
-  // Parse header row — normalise to lowercase with underscores
-  const headers = lines[0].split(',').map(h =>
-    h.trim().replace(/^"|"$/g, '').toLowerCase().replace(/\s+/g, '_')
+  const clientId     = process.env.FUEL_CLIENT_ID;
+  const clientSecret = process.env.FUEL_CLIENT_SECRET;
+
+  console.log('[fuel] clientId present:', !!clientId, '| clientSecret present:', !!clientSecret);
+  if (!clientId || !clientSecret) {
+    throw new Error('FUEL_CLIENT_ID or FUEL_CLIENT_SECRET are not set in Vercel environment variables.');
+  }
+
+  const { status, body } = await httpsRequest(
+    TOKEN_URL,
+    {
+      method: 'POST',
+      headers: {
+        'Accept':       'application/json',
+        'Content-Type': 'application/json',
+        'User-Agent':   'FuelScan/1.0',
+      },
+    },
+    { client_id: clientId, client_secret: clientSecret }
   );
 
-  const rows = [];
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-
-    // Simple CSV split — handles basic quoted fields
-    const values = [];
-    let current = '';
-    let inQuotes = false;
-    for (const ch of line) {
-      if (ch === '"') { inQuotes = !inQuotes; }
-      else if (ch === ',' && !inQuotes) { values.push(current.trim()); current = ''; }
-      else { current += ch; }
-    }
-    values.push(current.trim());
-
-    const row = {};
-    headers.forEach((h, idx) => { row[h] = values[idx] || ''; });
-    rows.push(row);
+  if (status < 200 || status >= 300) {
+    throw new Error(`Token request failed (${status}): ${body}`);
   }
-  return rows;
+
+  const json = JSON.parse(body);
+  // Response shape: { success, data: { access_token, expires_in, ... }, message }
+  const tokenData = json.data || json;
+  cachedToken = tokenData.access_token;
+  tokenExpiry = Date.now() + (tokenData.expires_in || 3600) * 1000;
+  return cachedToken;
 }
 
 /* ----------------------------------------------------------------
-   Fetch and cache the CSV
+   Fetch one batch of stations from the API
    ---------------------------------------------------------------- */
-async function fetchCSV() {
-  if (csvCache && Date.now() - csvCachedAt < CSV_TTL_MS) {
-    console.log('[fuel-csv] serving from cache, age:', Math.round((Date.now() - csvCachedAt) / 60000), 'mins');
-    return csvCache;
-  }
+async function fetchBatch(token, batchNumber) {
+  const url = `${PRICES_URL}?batch-number=${batchNumber}`;
+  const { status, body } = await httpsRequest(url, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Accept':        'application/json',
+      'User-Agent':    'FuelScan/1.0',
+    },
+  });
 
-  console.log('[fuel-csv] fetching fresh CSV from', CSV_URL);
-  const { status, body } = await httpsGet(CSV_URL);
-
+  if (status === 404 || status === 204) return [];  // no more batches
   if (status < 200 || status >= 300) {
-    throw new Error(`CSV fetch failed (${status}). Please check the CSV_URL in fuel-csv.js matches your portal's download link.`);
+    throw new Error(`Prices API error (${status}): ${body}`);
   }
 
-  const rows = parseCSV(body);
-  console.log('[fuel-csv] parsed', rows.length, 'stations');
+  const json = JSON.parse(body);
+  return Array.isArray(json) ? json : (json.data || []);
+}
 
-  if (rows.length === 0) {
-    throw new Error('CSV parsed but contained no rows. The CSV format may have changed — check the field names.');
+/* ----------------------------------------------------------------
+   Fetch ALL stations by firing all batches in parallel.
+   We probe batch 1 first to confirm access, then fire the rest
+   simultaneously. Reduces total time from ~17s to ~1-2s.
+   ---------------------------------------------------------------- */
+async function fetchAllStations(token) {
+  if (cachedStations && Date.now() - stationsCachedAt < STATIONS_TTL_MS) {
+    console.log('[fuel] serving from cache');
+    return cachedStations;
   }
 
-  // Log first row keys so we can verify field mapping
-  console.log('[fuel-csv] CSV fields:', Object.keys(rows[0]).join(', '));
+  console.log('[fuel] fetching all batches in parallel...');
+  const MAX_BATCHES = 20; // UK has ~17 batches of 500
 
-  csvCache    = rows;
-  csvCachedAt = Date.now();
-  return rows;
+  // Fire batches in parallel groups of 5 to respect the API's
+  // rate limit of 30 RPM while still being much faster than sequential.
+  const CONCURRENCY = 5;
+  const allStations = [];
+  let batchNum = 1;
+
+  while (batchNum <= MAX_BATCHES) {
+    const group = Array.from(
+      { length: Math.min(CONCURRENCY, MAX_BATCHES - batchNum + 1) },
+      (_, i) => fetchBatch(token, batchNum + i).catch(() => [])
+    );
+    const results = await Promise.all(group);
+    const flat = results.flat();
+
+    // If any batch in the group was empty, we've reached the end
+    const hitEnd = results.some(r => r.length === 0);
+    allStations.push(...flat);
+
+    if (hitEnd) break;
+    batchNum += CONCURRENCY;
+  }
+
+  console.log('[fuel] total stations fetched:', allStations.length);
+
+  cachedStations   = allStations;
+  stationsCachedAt = Date.now();
+  return allStations;
 }
 
 /* ----------------------------------------------------------------
@@ -126,41 +166,38 @@ function haversine(lat1, lng1, lat2, lng2) {
 }
 
 /* ----------------------------------------------------------------
-   Normalise a CSV row into our app's station format.
-   Field names below are best guesses based on the API response
-   structure — the log above will show the real field names on
-   first run so we can correct them if needed.
+   Normalise a raw station object into our app format.
+   Field names based on portal sample response.
    ---------------------------------------------------------------- */
-function normaliseRow(row, userLat, userLng) {
-  // Try multiple likely field name variations for lat/lng
-  const lat = parseFloat(
-    row.latitude || row.lat || row.site_latitude || row.location_latitude || ''
-  );
-  const lng = parseFloat(
-    row.longitude || row.lng || row.long || row.site_longitude || row.location_longitude || ''
-  );
-
+function normalise(raw, userLat, userLng) {
+  const lat = parseFloat(raw.latitude  || raw.lat);
+  const lng = parseFloat(raw.longitude || raw.lng);
   if (isNaN(lat) || isNaN(lng)) return null;
 
-  // Price fields — try multiple likely names
-  const petrolPrice = parseFloat(
-    row.e5 || row.unleaded || row.petrol || row.e5_price || row.unleaded_price || ''
-  ) || null;
+  // Extract fuel prices from the fuel_prices array
+  // Each entry: { fuel_type: 'E5'|'E10'|'B7'|..., price: 142.9 }
+  const prices = {};
+  if (Array.isArray(raw.fuel_prices)) {
+    raw.fuel_prices.forEach(fp => {
+      const type  = (fp.fuel_type || fp.type || '').toUpperCase();
+      const price = parseFloat(fp.price || fp.retail_price);
+      if (type && !isNaN(price)) prices[type] = price;
+    });
+  }
 
-  const dieselPrice = parseFloat(
-    row.b7 || row.diesel || row.diesel_price || row.b7_price || ''
-  ) || null;
+  const petrolPrice = prices['E5'] || prices['E10'] || null;
+  const dieselPrice = prices['B7'] || prices['DIESEL'] || null;
 
   return {
-    id:          row.node_id || row.site_id || row.id || String(Math.random()),
-    name:        row.trading_name || row.name || row.site_name || 'Unknown Station',
-    brand:       row.brand || row.operator || row.retailer || '',
-    address:     [row.address, row.town || row.city, row.postcode].filter(Boolean).join(', '),
+    id:          raw.node_id || raw.id || String(Math.random()),
+    name:        raw.trading_name || raw.name || 'Unknown Station',
+    brand:       raw.brand || raw.operator || '',
+    address:     [raw.address, raw.town, raw.postcode].filter(Boolean).join(', '),
     lat,
     lng,
     petrolPrice,
     dieselPrice,
-    lastUpdated: row.last_updated || row.updated_at || row.price_date || null,
+    lastUpdated: raw.last_updated || raw.updated_at || null,
     distance:    haversine(userLat, userLng, lat, lng),
   };
 }
@@ -184,10 +221,12 @@ module.exports = async function handler(req, res) {
   const radiusMiles = parseFloat(radius) || 5;
 
   try {
-    const rows = await fetchCSV();
+    const token      = await getAccessToken();
+    const rawStations = await fetchAllStations(token);
 
-    const results = rows
-      .map(row => normaliseRow(row, userLat, userLng))
+    // Normalise, filter by distance and fuel availability
+    const results = rawStations
+      .map(s => normalise(s, userLat, userLng))
       .filter(s => {
         if (!s) return false;
         if (s.distance > radiusMiles) return false;
@@ -200,13 +239,11 @@ module.exports = async function handler(req, res) {
         return ap - bp;
       });
 
-    console.log('[fuel-csv] returning', results.length, 'stations within', radiusMiles, 'miles');
-
-    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=60');
+    res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate=60');
     return res.status(200).json(results);
 
   } catch (err) {
-    console.error('[fuel-csv error]', err.message);
+    console.error('[fuel proxy error]', err.message);
     return res.status(500).json({ error: err.message });
   }
 };
