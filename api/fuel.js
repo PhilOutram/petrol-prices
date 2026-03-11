@@ -28,7 +28,6 @@ function httpsRequest(urlStr, options = {}, postBody = null) {
     const headers = { ...(options.headers || {}) };
     if (bodyStr) {
       headers['Content-Type']   = isJson ? 'application/json' : 'application/x-www-form-urlencoded';
-      headers['Content-Length'] = Buffer.byteLength(bodyStr);
     }
 
     const reqOptions = {
@@ -59,6 +58,7 @@ async function getAccessToken() {
   const clientId     = process.env.FUEL_CLIENT_ID;
   const clientSecret = process.env.FUEL_CLIENT_SECRET;
 
+  console.log('[fuel] clientId present:', !!clientId, '| clientSecret present:', !!clientSecret);
   if (!clientId || !clientSecret) {
     throw new Error('FUEL_CLIENT_ID or FUEL_CLIENT_SECRET are not set in Vercel environment variables.');
   }
@@ -68,10 +68,9 @@ async function getAccessToken() {
     {
       method: 'POST',
       headers: {
-        'Accept':     'application/json',
-        'User-Agent': 'FuelScan/1.0',
-        'Origin':     'https://www.fuel-finder.service.gov.uk',
-        'Referer':    'https://www.fuel-finder.service.gov.uk/',
+        'Accept':       'application/json',
+        'Content-Type': 'application/json',
+        'User-Agent':   'FuelScan/1.0',
       },
     },
     { client_id: clientId, client_secret: clientSecret }
