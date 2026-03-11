@@ -65,8 +65,16 @@ async function getAccessToken() {
 
   const { status, body } = await httpsRequest(
     TOKEN_URL,
-    { method: 'POST' },
-    { client_id: clientId, client_secret: clientSecret }  // JSON body
+    {
+      method: 'POST',
+      headers: {
+        'Accept':     'application/json',
+        'User-Agent': 'FuelScan/1.0',
+        'Origin':     'https://www.fuel-finder.service.gov.uk',
+        'Referer':    'https://www.fuel-finder.service.gov.uk/',
+      },
+    },
+    { client_id: clientId, client_secret: clientSecret }
   );
 
   if (status < 200 || status >= 300) {
@@ -87,7 +95,11 @@ async function getAccessToken() {
 async function fetchBatch(token, batchNumber) {
   const url = `${PRICES_URL}?batch-number=${batchNumber}`;
   const { status, body } = await httpsRequest(url, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Accept':        'application/json',
+      'User-Agent':    'FuelScan/1.0',
+    },
   });
 
   if (status === 404 || status === 204) return [];  // no more batches
