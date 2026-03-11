@@ -4,7 +4,7 @@
 
 const https = require('https');
 
-const API_BASE   = 'https://api.fuelfinder.service.gov.uk';
+const API_BASE   = 'https://www.fuel-finder.service.gov.uk';
 const TOKEN_URL  = `${API_BASE}/api/v1/oauth/generate_access_token`;
 const PRICES_URL = `${API_BASE}/api/v1/pfs/fuel-prices`;
 
