@@ -1,54 +1,50 @@
-// api/fuel.js — Vercel Serverless Function
-// UK Gov Fuel Finder API — correct endpoints from developer portal docs.
-// Secrets stored in Vercel Environment Variables, never exposed to browser.
-
+// api/fuel.js — Simple API test
 const https = require('https');
 
+<<<<<<< HEAD
+const API_BASE  = 'https://www.fuel-finder.service.gov.uk';
+const TOKEN_URL = `${API_BASE}/api/v1/oauth/generate_access_token`;
+=======
 const API_BASE   = 'https://www.fuel-finder.service.gov.uk';
 const TOKEN_URL  = `${API_BASE}/api/v1/oauth/generate_access_token`;
+>>>>>>> 514d5668de379f344bbeb4b561ead2b68731987e
 const PRICES_URL = `${API_BASE}/api/v1/pfs/fuel-prices`;
 
-// In-memory cache for token and station data
-let cachedToken      = null;
-let tokenExpiry      = 0;
-let cachedStations   = null;
-let stationsCachedAt = 0;
-const STATIONS_TTL_MS = 5 * 60 * 1000; // cache all stations for 5 minutes
-
-/* ----------------------------------------------------------------
-   https request helper — returns { status, body }
-   Sends JSON body when postBody is an object, raw string otherwise.
-   ---------------------------------------------------------------- */
 function httpsRequest(urlStr, options = {}, postBody = null) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlStr);
     const isJson = postBody && typeof postBody === 'object';
     const bodyStr = isJson ? JSON.stringify(postBody) : (postBody || null);
-
     const headers = { ...(options.headers || {}) };
     if (bodyStr) {
+<<<<<<< HEAD
+      headers['Content-Type'] = 'application/json';
+=======
       headers['Content-Type']   = isJson ? 'application/json' : 'application/x-www-form-urlencoded';
+>>>>>>> 514d5668de379f344bbeb4b561ead2b68731987e
     }
-
-    const reqOptions = {
+    const req = https.request({
       hostname: url.hostname,
-      path:     url.pathname + url.search,
-      method:   options.method || 'GET',
+      path: url.pathname + url.search,
+      method: options.method || 'GET',
       headers,
-    };
-
-    const req = https.request(reqOptions, res => {
+    }, res => {
       let data = '';
       res.on('data', chunk => { data += chunk; });
       res.on('end', () => resolve({ status: res.statusCode, body: data }));
     });
-
     req.on('error', reject);
     if (bodyStr) req.write(bodyStr);
     req.end();
   });
 }
 
+<<<<<<< HEAD
+async function getToken() {
+  const { status, body } = await httpsRequest(TOKEN_URL, { method: 'POST' }, {
+    client_id: process.env.FUEL_CLIENT_ID,
+    client_secret: process.env.FUEL_CLIENT_SECRET,
+=======
 /* ----------------------------------------------------------------
    OAuth — POST JSON body as per portal docs
    ---------------------------------------------------------------- */
@@ -99,17 +95,15 @@ async function fetchBatch(token, batchNumber) {
       'Accept':        'application/json',
       'User-Agent':    'FuelScan/1.0',
     },
+>>>>>>> 514d5668de379f344bbeb4b561ead2b68731987e
   });
-
-  if (status === 404 || status === 204) return [];  // no more batches
-  if (status < 200 || status >= 300) {
-    throw new Error(`Prices API error (${status}): ${body}`);
-  }
-
+  if (status !== 200) throw new Error(`Token failed (${status}): ${body}`);
   const json = JSON.parse(body);
-  return Array.isArray(json) ? json : (json.data || []);
+  return json.data.access_token;
 }
 
+<<<<<<< HEAD
+=======
 /* ----------------------------------------------------------------
    Fetch ALL stations by firing all batches in parallel.
    We probe batch 1 first to confirm access, then fire the rest
@@ -205,45 +199,28 @@ function normalise(raw, userLat, userLng) {
 /* ----------------------------------------------------------------
    Main handler
    ---------------------------------------------------------------- */
+>>>>>>> 514d5668de379f344bbeb4b561ead2b68731987e
 module.exports = async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin',  '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
+  res.setHeader('Access-Control-Allow-Origin', '*');
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'GET')    return res.status(405).json({ error: 'Method not allowed' });
-
-  const { lat, lng, radius, fuel } = req.query;
-  if (!lat || !lng) return res.status(400).json({ error: 'lat and lng are required' });
-
-  const userLat     = parseFloat(lat);
-  const userLng     = parseFloat(lng);
-  const radiusMiles = parseFloat(radius) || 5;
 
   try {
-    const token      = await getAccessToken();
-    const rawStations = await fetchAllStations(token);
-
-    // Normalise, filter by distance and fuel availability
-    const results = rawStations
-      .map(s => normalise(s, userLat, userLng))
-      .filter(s => {
-        if (!s) return false;
-        if (s.distance > radiusMiles) return false;
-        const price = fuel === 'diesel' ? s.dieselPrice : s.petrolPrice;
-        return price !== null && price > 0;
-      })
-      .sort((a, b) => {
-        const ap = fuel === 'diesel' ? a.dieselPrice : a.petrolPrice;
-        const bp = fuel === 'diesel' ? b.dieselPrice : b.petrolPrice;
-        return ap - bp;
-      });
-
-    res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate=60');
-    return res.status(200).json(results);
-
+    const token = await getToken();
+    const batch = req.query.batch || 1;
+    const { status, body } = await httpsRequest(
+      `${PRICES_URL}?batch-number=${batch}`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'User-Agent': 'FuelScan/1.0' } }
+    );
+    if (status !== 200) throw new Error(`API failed (${status}): ${body}`);
+    const stations = JSON.parse(body);
+    return res.status(200).json({
+      batch_number: parseInt(batch),
+      total_in_batch: stations.length,
+      fields: stations.length > 0 ? Object.keys(stations[0]) : [],
+      first_10: stations.slice(0, 10),
+    });
   } catch (err) {
-    console.error('[fuel proxy error]', err.message);
+    console.error(err.message);
     return res.status(500).json({ error: err.message });
   }
 };
