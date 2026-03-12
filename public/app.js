@@ -88,7 +88,7 @@ fetchBtn.addEventListener('click', async () => {
     document.getElementById('raw-json').textContent =
       JSON.stringify(stations[0], null, 2);
     rawWrap.classList.remove('hidden');
- 
+
     hideStatus();
   } catch (err) {
     showStatus('❌ Error: ' + err.message, 'error');
