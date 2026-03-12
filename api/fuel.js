@@ -33,6 +33,8 @@ module.exports = async function handler(req, res) {
   res.setHeader('Content-Type', 'application/json');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  console.log('[fuel] Vercel region:', process.env.VERCEL_REGION || 'unknown');
+
   // ── Step 1: check env vars ──────────────────────────────────────────
   const clientId     = process.env.FUEL_CLIENT_ID;
   const clientSecret = process.env.FUEL_CLIENT_SECRET;
