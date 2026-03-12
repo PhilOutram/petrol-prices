@@ -6,9 +6,71 @@ const fieldsRow = document.getElementById('fields-row');
 const tableWrap = document.getElementById('table-wrap');
 const rawWrap = document.getElementById('raw-wrap');
 
+<<<<<<< HEAD
 function showStatus(msg, type = 'loading') {
   statusEl.textContent = msg;
   statusEl.className = `status ${type}`;
+=======
+/* ----------------------------------------------------------------
+   CONFIG — update PROXY_URL if you deploy to a custom domain.
+   In Vercel, /api/fuel is relative so no change needed.
+   ---------------------------------------------------------------- */
+const CONFIG = {
+  PROXY_URL:  '/api/fuel',  // Vercel serverless function
+  DEMO_MODE:  false,        // set true to use synthetic data (no credentials needed)
+};
+
+const POSTCODES_API = 'https://api.postcodes.io/postcodes/';
+
+/* ================================================================
+   STATE
+   ================================================================ */
+let map          = null;
+let userMarker   = null;
+let stationMarkers = [];
+let allStations  = [];
+let userLatLng   = null;
+let activeCard   = null;
+
+let filterState = {
+  fuelType:    'petrol',
+  radiusMiles: 5,
+  sortBy:      'price',
+};
+
+/* ================================================================
+   DOM
+   ================================================================ */
+const $ = id => document.getElementById(id);
+const dom = {
+  btnGps:        $('btn-gps'),
+  postcodeInput: $('postcode-input'),
+  btnPostcode:   $('btn-postcode'),
+  radiusSelect:  $('radius-select'),
+  sortSelect:    $('sort-select'),
+  statusBar:     $('status-bar'),
+  statusText:    $('status-text'),
+  errorBar:      $('error-bar'),
+  errorText:     $('error-text'),
+  errorDismiss:  $('error-dismiss'),
+  lastUpdated:   $('last-updated'),
+  stationList:   $('station-list'),
+  resultCount:   $('result-count'),
+  statsRow:      $('stats-row'),
+  statCheapest:  $('stat-cheapest'),
+  statAvg:       $('stat-avg'),
+  statExpensive: $('stat-expensive'),
+  themeToggle:   $('theme-toggle'),
+};
+
+/* ================================================================
+   THEME TOGGLE
+   ================================================================ */
+const THEME_KEY = 'fuelscan-theme';
+
+function getStoredTheme() {
+  try { return localStorage.getItem(THEME_KEY) || 'dark'; } catch { return 'dark'; }
+>>>>>>> 514d5668de379f344bbeb4b561ead2b68731987e
 }
 
 function hideStatus() { statusEl.className = 'status hidden'; }
