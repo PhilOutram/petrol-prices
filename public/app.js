@@ -30,7 +30,7 @@ fetchBtn.addEventListener('click', async () => {
     const data = await res.json();
     const ms = Date.now() - t0;
 
-    if (!res.ok) throw new Error(data.error || 'Unknown error');
+    if (!res.ok) throw new Error(data.error + (data.detail ? ` — ${JSON.stringify(data.detail)}` : '') || 'Unknown error');
 
     // Stats
     document.getElementById('s-batch').textContent = data.batch_number;
