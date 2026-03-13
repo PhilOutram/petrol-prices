@@ -1,4 +1,4 @@
-// api/fuel.js — API test proxy (prices + station info)
+// api/fuel.js — Prices + station info merged
 const https = require('https');
 
 const API_BASE   = 'https://www.fuel-finder.service.gov.uk';
@@ -53,9 +53,7 @@ module.exports = async function handler(req, res) {
 
   console.log('[fuel] Region:', process.env.VERCEL_REGION || 'unknown');
 
-  const clientId = process.env.FUEL_CLIENT_ID;
-  const clientSecret = process.env.FUEL_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!process.env.FUEL_CLIENT_ID || !process.env.FUEL_CLIENT_SECRET) {
     return res.status(500).json({ error: 'Missing API credentials' });
   }
 
@@ -64,58 +62,63 @@ module.exports = async function handler(req, res) {
     token = await getToken();
     console.log('[fuel] Token OK');
   } catch (err) {
-    console.error('[fuel] Token error:', err.message);
     return res.status(500).json({ error: err.message });
   }
 
   const batch   = parseInt(req.query.batch) || 1;
   const authHdr = { Authorization: `Bearer ${token}` };
 
-  // ── Fetch prices ────────────────────────────────────────────────────
-  let stations = [];
-  try {
-    console.log('[fuel] Fetching prices batch', batch);
-    const { status, body } = await httpsRequest(
-      `${PRICES_URL}?batch-number=${batch}`, { headers: authHdr }
-    );
-    console.log('[fuel] Prices status:', status);
-    if (status !== 200) throw new Error(`Prices HTTP ${status}: ${body.slice(0, 200)}`);
-    stations = JSON.parse(body);
-    console.log('[fuel] Prices count:', stations.length);
-  } catch (err) {
-    console.error('[fuel] Prices error:', err.message);
-    return res.status(500).json({ error: 'Prices fetch failed', detail: err.message });
+  // Fetch both endpoints in parallel
+  const [pricesRes, infoRes] = await Promise.all([
+    httpsRequest(`${PRICES_URL}?batch-number=${batch}`, { headers: authHdr }),
+    httpsRequest(`${INFO_URL}?batch-number=${batch}`,   { headers: authHdr }),
+  ]);
+
+  console.log('[fuel] Prices status:', pricesRes.status, '| Info status:', infoRes.status);
+
+  if (pricesRes.status !== 200) {
+    return res.status(500).json({ error: `Prices fetch failed (HTTP ${pricesRes.status})` });
+  }
+  if (infoRes.status !== 200) {
+    return res.status(500).json({ error: `Info fetch failed (HTTP ${infoRes.status})` });
   }
 
-  // ── Fetch station info (address/postcode) ───────────────────────────
-  let infoResult = { status: null, sample: null, fields: [], error: null };
-  try {
-    console.log('[fuel] Fetching station info batch', batch, 'from', INFO_URL);
-    const { status, body } = await httpsRequest(
-      `${INFO_URL}?batch-number=${batch}`, { headers: authHdr }
-    );
-    console.log('[fuel] Info status:', status);
-    console.log('[fuel] Info body (first 500):', body.slice(0, 500));
-    if (status === 200) {
-      const infoData = JSON.parse(body);
-      infoResult.status = status;
-      infoResult.count  = infoData.length;
-      infoResult.fields = infoData.length > 0 ? Object.keys(infoData[0]) : [];
-      infoResult.sample = infoData[0] || null;
-    } else {
-      infoResult.status = status;
-      infoResult.error  = body.slice(0, 300);
-    }
-  } catch (err) {
-    console.error('[fuel] Info error:', err.message);
-    infoResult.error = err.message;
+  const prices  = JSON.parse(pricesRes.body);
+  const info    = JSON.parse(infoRes.body);
+  console.log('[fuel] Prices:', prices.length, '| Info:', info.length);
+
+  // Log first info record so we can see all fields
+  if (info.length > 0) {
+    console.log('[fuel] Info fields:', Object.keys(info[0]));
+    console.log('[fuel] Info sample location:', JSON.stringify(info[0].location));
   }
+
+  // Build a lookup map from node_id → info record
+  const infoMap = {};
+  for (const s of info) infoMap[s.node_id] = s;
+
+  // Merge prices + info
+  const merged = prices.map(p => {
+    const i = infoMap[p.node_id] || {};
+    const loc = i.location || {};
+    return {
+      node_id:       p.node_id,
+      trading_name:  p.trading_name,
+      brand:         i.brand_name || '—',
+      address:       [loc.address_line_1, loc.city].filter(Boolean).join(', ') || '—',
+      postcode:      loc.postcode || '—',
+      latitude:      loc.latitude  ?? null,
+      longitude:     loc.longitude ?? null,
+      phone:         p.public_phone_number || '—',
+      fuel_prices:   p.fuel_prices,
+    };
+  });
 
   return res.status(200).json({
-    batch_number:    batch,
-    total_in_batch:  stations.length,
-    fields:          stations.length > 0 ? Object.keys(stations[0]) : [],
-    first_10:        stations.slice(0, 10),
-    info_endpoint:   infoResult,   // <-- what came back from the info endpoint
+    batch_number:   batch,
+    total_in_batch: merged.length,
+    info_fields:    info.length > 0 ? Object.keys(info[0]) : [],
+    location_fields: info.length > 0 && info[0].location ? Object.keys(info[0].location) : [],
+    first_10:       merged.slice(0, 10),
   });
 };

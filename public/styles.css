@@ -222,3 +222,5 @@ pre {
   color: #9ca3af;
   cursor: default;
 }
+
+.coord-cell { font-family: 'Courier New', monospace; font-size: 11px; color: #6b7280; }
