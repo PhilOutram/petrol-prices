@@ -1,10 +1,12 @@
-// api/fuel.js — Prices + station info merged
+// api/fuel.js — Full dataset fetch (all batches, parallel groups)
 const https = require('https');
 
 const API_BASE   = 'https://www.fuel-finder.service.gov.uk';
 const TOKEN_URL  = `${API_BASE}/api/v1/oauth/generate_access_token`;
 const PRICES_URL = `${API_BASE}/api/v1/pfs/fuel-prices`;
 const INFO_URL   = `${API_BASE}/api/v1/pfs`;
+const MAX_BATCHES = 20;    // fetch up to this many — stops early if batch returns 0
+const GROUP_SIZE  = 5;     // concurrent requests per group
 
 function httpsRequest(urlStr, options = {}, postBody = null) {
   return new Promise((resolve, reject) => {
@@ -46,6 +48,48 @@ async function getToken() {
   return json.data.access_token;
 }
 
+async function fetchBatch(url, batchNum, authHdr) {
+  const { status, body } = await httpsRequest(
+    `${url}?batch-number=${batchNum}`, { headers: authHdr }
+  );
+  if (status !== 200) throw new Error(`HTTP ${status} on batch ${batchNum}`);
+  return JSON.parse(body);
+}
+
+async function fetchAllBatches(baseUrl, authHdr) {
+  const all = [];
+  let batch = 1;
+
+  while (batch <= MAX_BATCHES) {
+    // Build a group of batch numbers to fetch concurrently
+    const group = [];
+    for (let i = 0; i < GROUP_SIZE && batch <= MAX_BATCHES; i++, batch++) {
+      group.push(batch);
+    }
+
+    console.log(`[fuel] Fetching ${baseUrl.split('/').pop()} batches:`, group);
+    const results = await Promise.all(
+      group.map(n => fetchBatch(baseUrl, n, authHdr))
+    );
+
+    let gotAny = false;
+    for (const result of results) {
+      if (result.length > 0) {
+        all.push(...result);
+        gotAny = true;
+      }
+    }
+
+    // If every batch in this group was empty, we've reached the end
+    if (!gotAny) {
+      console.log('[fuel] Empty batch group — stopping');
+      break;
+    }
+  }
+
+  return all;
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Content-Type', 'application/json');
@@ -65,60 +109,61 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: err.message });
   }
 
-  const batch   = parseInt(req.query.batch) || 1;
   const authHdr = { Authorization: `Bearer ${token}` };
+  const t0 = Date.now();
 
-  // Fetch both endpoints in parallel
-  const [pricesRes, infoRes] = await Promise.all([
-    httpsRequest(`${PRICES_URL}?batch-number=${batch}`, { headers: authHdr }),
-    httpsRequest(`${INFO_URL}?batch-number=${batch}`,   { headers: authHdr }),
-  ]);
+  // If ?batch=N is passed, just fetch that single batch (for testing)
+  const singleBatch = req.query.batch ? parseInt(req.query.batch) : null;
 
-  console.log('[fuel] Prices status:', pricesRes.status, '| Info status:', infoRes.status);
-
-  if (pricesRes.status !== 200) {
-    return res.status(500).json({ error: `Prices fetch failed (HTTP ${pricesRes.status})` });
+  let prices, info;
+  try {
+    if (singleBatch) {
+      console.log('[fuel] Single batch mode:', singleBatch);
+      [prices, info] = await Promise.all([
+        fetchBatch(PRICES_URL, singleBatch, authHdr),
+        fetchBatch(INFO_URL,   singleBatch, authHdr),
+      ]);
+    } else {
+      console.log('[fuel] Full fetch mode — fetching all batches');
+      [prices, info] = await Promise.all([
+        fetchAllBatches(PRICES_URL, authHdr),
+        fetchAllBatches(INFO_URL,   authHdr),
+      ]);
+    }
+  } catch (err) {
+    console.error('[fuel] Fetch error:', err.message);
+    return res.status(500).json({ error: err.message });
   }
-  if (infoRes.status !== 200) {
-    return res.status(500).json({ error: `Info fetch failed (HTTP ${infoRes.status})` });
-  }
 
-  const prices  = JSON.parse(pricesRes.body);
-  const info    = JSON.parse(infoRes.body);
-  console.log('[fuel] Prices:', prices.length, '| Info:', info.length);
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
+  console.log(`[fuel] Done — prices: ${prices.length}, info: ${info.length}, time: ${elapsed}s`);
 
-  // Log first info record so we can see all fields
-  if (info.length > 0) {
-    console.log('[fuel] Info fields:', Object.keys(info[0]));
-    console.log('[fuel] Info sample location:', JSON.stringify(info[0].location));
-  }
-
-  // Build a lookup map from node_id → info record
+  // Merge
   const infoMap = {};
   for (const s of info) infoMap[s.node_id] = s;
 
-  // Merge prices + info
   const merged = prices.map(p => {
-    const i = infoMap[p.node_id] || {};
+    const i   = infoMap[p.node_id] || {};
     const loc = i.location || {};
     return {
-      node_id:       p.node_id,
-      trading_name:  p.trading_name,
-      brand:         i.brand_name || '—',
-      address:       [loc.address_line_1, loc.city].filter(Boolean).join(', ') || '—',
-      postcode:      loc.postcode || '—',
-      latitude:      loc.latitude  ?? null,
-      longitude:     loc.longitude ?? null,
-      phone:         p.public_phone_number || '—',
-      fuel_prices:   p.fuel_prices,
+      node_id:      p.node_id,
+      trading_name: p.trading_name,
+      brand:        i.brand_name || '—',
+      address:      [loc.address_line_1, loc.city].filter(Boolean).join(', ') || '—',
+      postcode:     loc.postcode  || '—',
+      latitude:     loc.latitude  ?? null,
+      longitude:    loc.longitude ?? null,
+      phone:        p.public_phone_number || '—',
+      fuel_prices:  p.fuel_prices,
     };
   });
 
   return res.status(200).json({
-    batch_number:   batch,
-    total_in_batch: merged.length,
-    info_fields:    info.length > 0 ? Object.keys(info[0]) : [],
+    total_stations: merged.length,
+    batches_fetched: singleBatch ? 1 : Math.ceil(prices.length / 500),
+    elapsed_seconds: parseFloat(elapsed),
+    info_fields:     info.length > 0 ? Object.keys(info[0]) : [],
     location_fields: info.length > 0 && info[0].location ? Object.keys(info[0].location) : [],
-    first_10:       merged.slice(0, 10),
+    first_10:        merged.slice(0, 10),
   });
 };

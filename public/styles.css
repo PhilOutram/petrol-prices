@@ -224,3 +224,11 @@ pre {
 }
 
 .coord-cell { font-family: 'Courier New', monospace; font-size: 11px; color: #6b7280; }
+
+.btn-primary  { padding: 9px 22px; background: #2563eb; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: background 0.15s; }
+.btn-primary:hover  { background: #1d4ed8; }
+.btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
+.btn-secondary { padding: 9px 18px; background: #fff; color: #2563eb; border: 1px solid #2563eb; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+.btn-secondary:hover { background: #eff6ff; }
+.btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+.divider { font-size: 13px; color: #9ca3af; padding: 0 4px; }
