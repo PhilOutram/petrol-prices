@@ -1,9 +1,10 @@
-// api/fuel.js — Simple API test proxy
+// api/fuel.js — API test proxy (prices + station info)
 const https = require('https');
 
 const API_BASE   = 'https://www.fuel-finder.service.gov.uk';
 const TOKEN_URL  = `${API_BASE}/api/v1/oauth/generate_access_token`;
 const PRICES_URL = `${API_BASE}/api/v1/pfs/fuel-prices`;
+const INFO_URL   = `${API_BASE}/api/v1/pfs`;
 
 function httpsRequest(urlStr, options = {}, postBody = null) {
   return new Promise((resolve, reject) => {
@@ -34,68 +35,87 @@ function httpsRequest(urlStr, options = {}, postBody = null) {
   });
 }
 
+async function getToken() {
+  const { status, body } = await httpsRequest(TOKEN_URL, { method: 'POST' }, {
+    client_id:     process.env.FUEL_CLIENT_ID,
+    client_secret: process.env.FUEL_CLIENT_SECRET,
+  });
+  if (status !== 200) throw new Error(`Token failed (HTTP ${status}): ${body.slice(0, 200)}`);
+  const json = JSON.parse(body);
+  if (!json.data?.access_token) throw new Error('No access_token in response');
+  return json.data.access_token;
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Content-Type', 'application/json');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  console.log('[fuel] Vercel region:', process.env.VERCEL_REGION || 'unknown');
+  console.log('[fuel] Region:', process.env.VERCEL_REGION || 'unknown');
 
-  // ── Step 1: check env vars ──────────────────────────────────────────
-  const clientId     = process.env.FUEL_CLIENT_ID;
+  const clientId = process.env.FUEL_CLIENT_ID;
   const clientSecret = process.env.FUEL_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
-    console.error('[fuel] Missing env vars');
-    return res.status(500).json({ error: 'Server misconfiguration: missing API credentials' });
+    return res.status(500).json({ error: 'Missing API credentials' });
   }
-  console.log('[fuel] Env vars present. Client ID starts with:', clientId.slice(0, 4) + '...');
 
-  // ── Step 2: get token ───────────────────────────────────────────────
   let token;
   try {
-    const tokenPayload = { client_id: clientId, client_secret: clientSecret };
-    console.log('[fuel] Requesting token from', TOKEN_URL);
-    console.log('[fuel] Token payload keys:', Object.keys(tokenPayload));
-    const { status, body } = await httpsRequest(TOKEN_URL, { method: 'POST' }, tokenPayload);
-    console.log('[fuel] Token response status:', status);
-    console.log('[fuel] Token response body (first 300):', body.slice(0, 300));
-    if (status !== 200) {
-      return res.status(500).json({ error: `Token request failed (HTTP ${status})`, detail: body.slice(0, 300) });
-    }
-    const json = JSON.parse(body);
-    if (!json.data || !json.data.access_token) {
-      return res.status(500).json({ error: 'Token response missing access_token', detail: json });
-    }
-    token = json.data.access_token;
-    console.log('[fuel] Token obtained OK');
+    token = await getToken();
+    console.log('[fuel] Token OK');
   } catch (err) {
-    console.error('[fuel] Token fetch threw:', err.message);
-    return res.status(500).json({ error: 'Token fetch failed', detail: err.message });
+    console.error('[fuel] Token error:', err.message);
+    return res.status(500).json({ error: err.message });
   }
 
-  // ── Step 3: fetch batch ─────────────────────────────────────────────
-  const batch = parseInt(req.query.batch) || 1;
-  const url   = `${PRICES_URL}?batch-number=${batch}`;
+  const batch   = parseInt(req.query.batch) || 1;
+  const authHdr = { Authorization: `Bearer ${token}` };
+
+  // ── Fetch prices ────────────────────────────────────────────────────
+  let stations = [];
   try {
-    console.log('[fuel] Fetching batch', batch, 'from', url);
-    const { status, body } = await httpsRequest(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    console.log('[fuel] Prices response status:', status);
-    console.log('[fuel] Prices response (first 200):', body.slice(0, 200));
-    if (status !== 200) {
-      return res.status(500).json({ error: `Prices request failed (HTTP ${status})`, detail: body.slice(0, 300) });
-    }
-    const stations = JSON.parse(body);
-    console.log('[fuel] Stations in batch:', stations.length);
-    return res.status(200).json({
-      batch_number:   batch,
-      total_in_batch: stations.length,
-      fields:         stations.length > 0 ? Object.keys(stations[0]) : [],
-      first_10:       stations.slice(0, 10),
-    });
+    console.log('[fuel] Fetching prices batch', batch);
+    const { status, body } = await httpsRequest(
+      `${PRICES_URL}?batch-number=${batch}`, { headers: authHdr }
+    );
+    console.log('[fuel] Prices status:', status);
+    if (status !== 200) throw new Error(`Prices HTTP ${status}: ${body.slice(0, 200)}`);
+    stations = JSON.parse(body);
+    console.log('[fuel] Prices count:', stations.length);
   } catch (err) {
-    console.error('[fuel] Prices fetch threw:', err.message);
+    console.error('[fuel] Prices error:', err.message);
     return res.status(500).json({ error: 'Prices fetch failed', detail: err.message });
   }
+
+  // ── Fetch station info (address/postcode) ───────────────────────────
+  let infoResult = { status: null, sample: null, fields: [], error: null };
+  try {
+    console.log('[fuel] Fetching station info batch', batch, 'from', INFO_URL);
+    const { status, body } = await httpsRequest(
+      `${INFO_URL}?batch-number=${batch}`, { headers: authHdr }
+    );
+    console.log('[fuel] Info status:', status);
+    console.log('[fuel] Info body (first 500):', body.slice(0, 500));
+    if (status === 200) {
+      const infoData = JSON.parse(body);
+      infoResult.status = status;
+      infoResult.count  = infoData.length;
+      infoResult.fields = infoData.length > 0 ? Object.keys(infoData[0]) : [];
+      infoResult.sample = infoData[0] || null;
+    } else {
+      infoResult.status = status;
+      infoResult.error  = body.slice(0, 300);
+    }
+  } catch (err) {
+    console.error('[fuel] Info error:', err.message);
+    infoResult.error = err.message;
+  }
+
+  return res.status(200).json({
+    batch_number:    batch,
+    total_in_batch:  stations.length,
+    fields:          stations.length > 0 ? Object.keys(stations[0]) : [],
+    first_10:        stations.slice(0, 10),
+    info_endpoint:   infoResult,   // <-- what came back from the info endpoint
+  });
 };
