@@ -52,6 +52,7 @@ async function fetchBatch(url, batchNum, authHdr) {
   const { status, body } = await httpsRequest(
     `${url}?batch-number=${batchNum}`, { headers: authHdr }
   );
+  if (status === 404) return null;  // past the last batch
   if (status !== 200) throw new Error(`HTTP ${status} on batch ${batchNum}`);
   return JSON.parse(body);
 }
@@ -59,9 +60,9 @@ async function fetchBatch(url, batchNum, authHdr) {
 async function fetchAllBatches(baseUrl, authHdr) {
   const all = [];
   let batch = 1;
+  let reachedEnd = false;
 
-  while (batch <= MAX_BATCHES) {
-    // Build a group of batch numbers to fetch concurrently
+  while (batch <= MAX_BATCHES && !reachedEnd) {
     const group = [];
     for (let i = 0; i < GROUP_SIZE && batch <= MAX_BATCHES; i++, batch++) {
       group.push(batch);
@@ -72,21 +73,16 @@ async function fetchAllBatches(baseUrl, authHdr) {
       group.map(n => fetchBatch(baseUrl, n, authHdr))
     );
 
-    let gotAny = false;
     for (const result of results) {
-      if (result.length > 0) {
+      if (result === null) {
+        reachedEnd = true;  // 404 — no more batches
+      } else if (result.length > 0) {
         all.push(...result);
-        gotAny = true;
       }
-    }
-
-    // If every batch in this group was empty, we've reached the end
-    if (!gotAny) {
-      console.log('[fuel] Empty batch group — stopping');
-      break;
     }
   }
 
+  console.log(`[fuel] ${baseUrl.split('/').pop()} total: ${all.length}`);
   return all;
 }
 
