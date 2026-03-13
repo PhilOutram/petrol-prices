@@ -56,15 +56,28 @@ fetchBtn.addEventListener('click', async () => {
       const thead = document.getElementById('table-head');
       const tbody = document.getElementById('table-body');
 
+      const fuelLabels = {
+        'E10':         '⛽ Petrol (E10)',
+        'E5':          '⛽ Petrol (E5)',
+        'B7_STANDARD': '🚛 Diesel',
+        'B7_PREMIUM':  '🚛 Diesel Premium',
+      };
+      const fieldLabels = {
+        'node_id':             'ID',
+        'public_phone_number': 'Phone',
+        'trading_name':        'Station Name',
+      };
+
       thead.innerHTML = '<tr>' +
-        simpleFields.map(f => `<th>${f}</th>`).join('') +
-        fuelTypes.map(ft => `<th>💷 ${ft}</th>`).join('') +
+        simpleFields.map(f => `<th>${fieldLabels[f] || f}</th>`).join('') +
+        fuelTypes.map(ft => `<th>${fuelLabels[ft] || ft}</th>`).join('') +
         '</tr>';
 
       tbody.innerHTML = stations.map(s => {
         const simpleCells = simpleFields.map(f => {
           const v = s[f];
           if (v === null || v === undefined || v === '') return `<td class="null-cell">—</td>`;
+          if (f === 'node_id') return `<td><span class="node-id" title="${String(v)}">${String(v).slice(0, 8)}…</span></td>`;
           return `<td title="${String(v)}">${String(v)}</td>`;
         }).join('');
 

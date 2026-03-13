@@ -215,3 +215,10 @@ pre {
   overflow-x: auto;
   font-family: 'Courier New', monospace;
 }
+
+.node-id {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  color: #9ca3af;
+  cursor: default;
+}
