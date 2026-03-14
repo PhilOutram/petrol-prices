@@ -3,50 +3,65 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FuelScan — API Test</title>
+  <title>FuelScan — UK Fuel Prices</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="container">
-    <h1>FuelScan <span class="tag">API Test</span></h1>
-    <p class="subtitle">Fetch all UK fuel stations from the Government Fuel Finder API and inspect the results.</p>
 
-    <div class="controls">
-      <button id="fetch-all-btn" class="btn-primary">Fetch All Stations</button>
-      <span class="divider">or test a single batch:</span>
-      <input id="batch-input" type="number" value="1" min="1" max="20" />
-      <button id="fetch-one-btn" class="btn-secondary">Fetch Batch</button>
+    <div class="page-header">
+      <div class="header-left">
+        <h1>⛽ FuelScan</h1>
+        <p class="subtitle">Find the cheapest fuel near you</p>
+      </div>
+      <a href="/check.html" class="check-link" title="API diagnostic tool">✓</a>
+    </div>
+
+    <!-- Search -->
+    <div class="search-card">
+      <div class="search-row">
+        <input id="postcode-input" type="text" placeholder="Enter postcode…" maxlength="8" />
+        <button id="search-btn" class="btn-primary">Search</button>
+        <button id="gps-btn" class="btn-secondary" title="Use my location">📍</button>
+      </div>
+      <div class="search-options">
+        <label>Radius:
+          <select id="radius-select">
+            <option value="2">2 miles</option>
+            <option value="5" selected>5 miles</option>
+            <option value="10">10 miles</option>
+            <option value="20">20 miles</option>
+          </select>
+        </label>
+        <label>Fuel:
+          <select id="fuel-select">
+            <option value="E10">Petrol (E10)</option>
+            <option value="E5">Petrol (E5)</option>
+            <option value="B7_STANDARD">Diesel</option>
+            <option value="B7_PREMIUM">Diesel Premium</option>
+          </select>
+        </label>
+      </div>
     </div>
 
     <div id="status" class="status hidden"></div>
 
-    <div id="stats" class="stats hidden">
-      <div class="stat"><span class="stat-label">Total Stations</span><span id="s-count" class="stat-value">—</span></div>
-      <div class="stat"><span class="stat-label">Batches Fetched</span><span id="s-batches" class="stat-value">—</span></div>
-      <div class="stat"><span class="stat-label">Info Fields</span><span id="s-fields" class="stat-value">—</span></div>
-      <div class="stat"><span class="stat-label">Fetch Time</span><span id="s-time" class="stat-value">—</span></div>
+    <!-- Profile info bar -->
+    <div id="profile-bar" class="profile-bar hidden">
+      <span id="profile-text"></span>
+      <button id="reset-profile-btn" class="btn-ghost" title="Clear saved profile and do full search">↺ Reset</button>
     </div>
 
-    <div id="fields-row" class="fields-row hidden">
-      <strong>Station info fields:</strong>
-      <span id="fields-list"></span>
-    </div>
-
-    <div id="table-wrap" class="table-wrap hidden">
-      <h2>First 10 Stations</h2>
-      <div class="table-scroll">
-        <table id="station-table">
-          <thead id="table-head"></thead>
-          <tbody id="table-body"></tbody>
-        </table>
+    <!-- Results -->
+    <div id="results" class="results hidden">
+      <div class="results-header">
+        <h2 id="results-title">Nearby Stations</h2>
+        <span id="results-meta" class="results-meta"></span>
       </div>
+      <div id="station-list" class="station-list"></div>
     </div>
 
-    <div id="raw-wrap" class="raw-wrap hidden">
-      <h2>Raw JSON (first station)</h2>
-      <pre id="raw-json"></pre>
-    </div>
   </div>
-  <script src="app.js"></script>
+  <script src="index.js"></script>
 </body>
 </html>
