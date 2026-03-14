@@ -4,36 +4,41 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FuelScan — UK Fuel Prices</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="container">
+  <div class="app">
 
-    <div class="page-header">
+    <!-- Header -->
+    <header class="header">
       <div class="header-left">
-        <h1>⛽ FuelScan</h1>
-        <p class="subtitle">Find the cheapest fuel near you</p>
+        <span class="logo">⛽</span>
+        <span class="logo-text">FuelScan</span>
       </div>
       <a href="/check.html" class="check-link" title="API diagnostic tool">✓</a>
-    </div>
+    </header>
 
-    <!-- Search -->
-    <div class="search-card">
+    <!-- Search panel -->
+    <div class="search-panel">
       <div class="search-row">
-        <input id="postcode-input" type="text" placeholder="Enter postcode…" maxlength="8" />
+        <input id="postcode-input" type="text" placeholder="Postcode…" maxlength="8" autocomplete="off" />
         <button id="search-btn" class="btn-primary">Search</button>
-        <button id="gps-btn" class="btn-secondary" title="Use my location">📍</button>
+        <button id="gps-btn" class="btn-icon" title="Use my location">📍</button>
+        <button id="fav-btn" class="btn-icon btn-fav" title="Search favourite" disabled>★</button>
       </div>
       <div class="search-options">
-        <label>Radius:
+        <label>Radius
           <select id="radius-select">
-            <option value="2">2 miles</option>
-            <option value="5" selected>5 miles</option>
-            <option value="10">10 miles</option>
-            <option value="20">20 miles</option>
+            <option value="2">2 mi</option>
+            <option value="5" selected>5 mi</option>
+            <option value="10">10 mi</option>
+            <option value="20">20 mi</option>
           </select>
         </label>
-        <label>Fuel:
+        <label>Fuel
           <select id="fuel-select">
             <option value="E10">Petrol (E10)</option>
             <option value="E5">Petrol (E5)</option>
@@ -41,18 +46,52 @@
             <option value="B7_PREMIUM">Diesel Premium</option>
           </select>
         </label>
+        <label class="toggle-label">
+          <input type="checkbox" id="map-toggle" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Map
+        </label>
       </div>
     </div>
 
+    <!-- Status -->
     <div id="status" class="status hidden"></div>
 
-    <!-- Profile info bar -->
+    <!-- Profile bar -->
     <div id="profile-bar" class="profile-bar hidden">
       <span id="profile-text"></span>
-      <button id="reset-profile-btn" class="btn-ghost" title="Clear saved profile and do full search">↺ Reset</button>
+      <button id="reset-profile-btn" class="btn-ghost">↺ Reset</button>
     </div>
 
-    <!-- Results -->
+    <!-- Summary bar -->
+    <div id="summary-bar" class="summary-bar hidden">
+      <div class="summary-item summary-best">
+        <div class="summary-label">Cheapest</div>
+        <div class="summary-name" id="sum-cheap-name">—</div>
+        <div class="summary-price" id="sum-cheap-price">—</div>
+        <div class="summary-fill" id="sum-cheap-fill">—</div>
+      </div>
+      <div class="summary-divider"></div>
+      <div class="summary-item summary-worst">
+        <div class="summary-label">Most Expensive</div>
+        <div class="summary-name" id="sum-exp-name">—</div>
+        <div class="summary-price" id="sum-exp-price">—</div>
+        <div class="summary-fill" id="sum-exp-fill">—</div>
+      </div>
+      <div class="summary-divider"></div>
+      <div class="summary-item summary-saving">
+        <div class="summary-label">Save by choosing cheapest</div>
+        <div class="summary-saving-val" id="sum-saving">—</div>
+        <div class="summary-fill" id="sum-saving-desc">per 60L fill</div>
+      </div>
+    </div>
+
+    <!-- Map -->
+    <div id="map-wrap" class="map-wrap hidden">
+      <div id="map"></div>
+    </div>
+
+    <!-- Results list -->
     <div id="results" class="results hidden">
       <div class="results-header">
         <h2 id="results-title">Nearby Stations</h2>
@@ -62,6 +101,8 @@
     </div>
 
   </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="index.js"></script>
 </body>
 </html>
