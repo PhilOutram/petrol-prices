@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FuelScan — API Check</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="page-header">
+      <div>
+        <h1>FuelScan <span class="tag">API Check</span></h1>
+        <p class="subtitle">Diagnostic tool — full 15-batch fetch to inspect raw API data.</p>
+      </div>
+      <a href="/" class="back-link">← Back to app</a>
+    </div>
+
+    <div class="controls">
+      <button id="fetch-all-btn" class="btn-primary">Fetch All Stations</button>
+      <span class="divider">or test a single batch:</span>
+      <input id="batch-input" type="number" value="1" min="1" max="20" />
+      <button id="fetch-one-btn" class="btn-secondary">Fetch Batch</button>
+    </div>
+
+    <div id="status" class="status hidden"></div>
+
+    <div id="stats" class="stats hidden">
+      <div class="stat"><span class="stat-label">Total Stations</span><span id="s-count" class="stat-value">—</span></div>
+      <div class="stat"><span class="stat-label">Batches Fetched</span><span id="s-batches" class="stat-value">—</span></div>
+      <div class="stat"><span class="stat-label">Info Fields</span><span id="s-fields" class="stat-value">—</span></div>
+      <div class="stat"><span class="stat-label">Fetch Time</span><span id="s-time" class="stat-value">—</span></div>
+    </div>
+
+    <div id="batch-breakdown" class="batch-breakdown hidden">
+      <strong>Stations per batch:</strong>
+      <span id="batch-list"></span>
+    </div>
+
+    <div id="fields-row" class="fields-row hidden">
+      <strong>Station info fields:</strong>
+      <span id="fields-list"></span>
+    </div>
+
+    <div id="table-wrap" class="table-wrap hidden">
+      <h2>First 10 Stations</h2>
+      <div class="table-scroll">
+        <table id="station-table">
+          <thead id="table-head"></thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="raw-wrap" class="raw-wrap hidden">
+      <h2>Raw JSON (first station)</h2>
+      <pre id="raw-json"></pre>
+    </div>
+  </div>
+  <script src="check.js"></script>
+</body>
+</html>
