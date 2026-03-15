@@ -433,21 +433,18 @@ function saveFavSettings(postcode, lat, lng, fuelType, fuelLabels, radius) {
 }
 
 // ── Search here (map pan) ─────────────────────────────────────────
-searchHereBtn.addEventListener('click', () => {
-  const centre = leafletMap.getCenter();
-  const bounds = leafletMap.getBounds();
-  // Radius = distance from centre to nearest edge midpoint (in miles)
-  const northMid = L.latLng(bounds.getNorth(), centre.lng);
-  const radiusM  = leafletMap.distance(centre, northMid);
-  const radiusMi = radiusM / 1609.344;
-
-  // Temporarily override radius select for this search
-  const prevRadius = radiusSelect.value;
-  // We pass the computed radius directly into filterStations via a one-off search
-  searchHereBtn.classList.add('hidden');
-  mapMoved = false;
-  doSearch(centre.lat, centre.lng, null, false, radiusMi);
-});
+if (searchHereBtn) {
+  searchHereBtn.addEventListener('click', () => {
+    const centre = leafletMap.getCenter();
+    const bounds = leafletMap.getBounds();
+    const northMid = L.latLng(bounds.getNorth(), centre.lng);
+    const radiusM  = leafletMap.distance(centre, northMid);
+    const radiusMi = radiusM / 1609.344;
+    searchHereBtn.classList.add('hidden');
+    mapMoved = false;
+    doSearch(centre.lat, centre.lng, null, false, radiusMi);
+  });
+}
 
 // ── Events ────────────────────────────────────────────────────────
 searchBtn.addEventListener('click', async () => {

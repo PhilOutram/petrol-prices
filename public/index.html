@@ -18,7 +18,10 @@
         <span class="logo">⛽</span>
         <span class="logo-text">FuelScan</span>
       </div>
-      <a href="/check.html" class="check-link" title="API diagnostic tool">✓</a>
+      <div class="header-right">
+        <button id="reset-profile-btn" class="btn-icon-sm" title="Reset data profile">↺</button>
+        <a href="/check.html" class="check-link" title="API diagnostic tool">✓</a>
+      </div>
     </header>
 
     <!-- Search panel -->
@@ -46,22 +49,11 @@
             <option value="B7_PREMIUM">Diesel Premium</option>
           </select>
         </label>
-        <label class="toggle-label">
-          <input type="checkbox" id="map-toggle" />
-          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-          Map
-        </label>
       </div>
     </div>
 
-    <!-- Status -->
+    <!-- Status / progress (auto-hides after search) -->
     <div id="status" class="status hidden"></div>
-
-    <!-- Profile bar -->
-    <div id="profile-bar" class="profile-bar hidden">
-      <span id="profile-text"></span>
-      <button id="reset-profile-btn" class="btn-ghost">↺ Reset</button>
-    </div>
 
     <!-- Summary bar -->
     <div id="summary-bar" class="summary-bar hidden">
@@ -73,22 +65,23 @@
       </div>
       <div class="summary-divider"></div>
       <div class="summary-item summary-worst">
-        <div class="summary-label">Most Expensive</div>
+        <div class="summary-label">Priciest</div>
         <div class="summary-name" id="sum-exp-name">—</div>
         <div class="summary-price" id="sum-exp-price">—</div>
         <div class="summary-fill" id="sum-exp-fill">—</div>
       </div>
       <div class="summary-divider"></div>
       <div class="summary-item summary-saving">
-        <div class="summary-label">Save by choosing cheapest</div>
+        <div class="summary-label">Save / 60L</div>
         <div class="summary-saving-val" id="sum-saving">—</div>
-        <div class="summary-fill" id="sum-saving-desc">per 60L fill</div>
+        <div class="summary-fill" id="sum-saving-desc"></div>
       </div>
     </div>
 
-    <!-- Map -->
+    <!-- Map (always visible after search) -->
     <div id="map-wrap" class="map-wrap hidden">
       <div id="map"></div>
+      <button id="search-here-btn" class="search-here-btn hidden">🔍 Search here</button>
     </div>
 
     <!-- Results list -->
