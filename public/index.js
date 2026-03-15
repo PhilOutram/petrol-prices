@@ -231,13 +231,32 @@ function initMap(lat, lng) {
   }
 }
 
-function makeMarkerIcon(price, cheapest, priciest, isPinned) {
-  const range = priciest - cheapest || 1;
-  const pct   = (price - cheapest) / range;
-  const color = pct < 0.33 ? '#059669' : pct < 0.66 ? '#d97706' : '#dc2626';
-  const border = isPinned ? '#2563eb' : 'white';
-  const bw     = isPinned ? 3 : 2;
-  // Wider, squatter shape: 48w × 44h, text centred better
+// Colour scale: green at cheapest, orange at cheapest+5p, red beyond that
+// Linearly interpolated between anchor points
+function priceColor(price, cheapest) {
+  const MID_PENCE = 5;   // pence above cheapest where colour hits orange
+  const RED_PENCE = 10;  // pence above cheapest where colour hits full red
+
+  function lerp(a, b, t) { return Math.round(a + (b - a) * Math.max(0, Math.min(1, t))); }
+  function lerpColor(c1, c2, t) {
+    return `rgb(${lerp(c1[0],c2[0],t)},${lerp(c1[1],c2[1],t)},${lerp(c1[2],c2[2],t)})`;
+  }
+
+  const GREEN  = [5,  150, 105];   // #059669
+  const ORANGE = [217, 119,  6];   // #d97706
+  const RED    = [220,  38, 38];   // #dc2626
+
+  const diff = price - cheapest;
+  if (diff <= 0)          return lerpColor(GREEN,  ORANGE, 0);
+  if (diff <= MID_PENCE)  return lerpColor(GREEN,  ORANGE, diff / MID_PENCE);
+  if (diff <= RED_PENCE)  return lerpColor(ORANGE, RED,    (diff - MID_PENCE) / (RED_PENCE - MID_PENCE));
+  return `rgb(${RED[0]},${RED[1]},${RED[2]})`;
+}
+
+function makeMarkerIcon(price, cheapest, priciest, isPinned, isHighlighted) {
+  const color  = priceColor(price, cheapest);
+  const border = isHighlighted ? '#facc15' : isPinned ? '#2563eb' : 'white';
+  const bw     = isHighlighted ? 4 : isPinned ? 3 : 2;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="52" height="46" viewBox="0 0 52 46">
     <ellipse cx="26" cy="43" rx="9" ry="3.5" fill="rgba(0,0,0,0.15)"/>
     <path d="M26 3 C14 3 6 11 6 21 C6 33 26 43 26 43 C26 43 46 33 46 21 C46 11 38 3 26 3Z"
@@ -272,16 +291,22 @@ function renderMap(stations, lat, lng, fuelType, pinned) {
 
   stations.forEach(s => {
     const isPinned = pinnedIds.has(s.node_id);
-    const icon     = makeMarkerIcon(s.price, cheapest, priciest, isPinned);
+    const icon     = makeMarkerIcon(s.price, cheapest, priciest, isPinned, false);
+    const popupColor = priceColor(s.price, cheapest);
     const marker   = L.marker([s.latitude, s.longitude], { icon })
       .addTo(leafletMap)
       .bindPopup(`
         <div style="font-family:'DM Sans',sans-serif;min-width:160px">
           <div style="font-weight:700;font-size:13px;margin-bottom:3px">${s.trading_name}</div>
           <div style="color:#6b7280;font-size:12px;margin-bottom:5px">${s.address || s.postcode || ''}</div>
-          <div style="font-size:20px;font-weight:700;color:${s.price===cheapest?'#059669':'#111827'}">${s.price.toFixed(1)}p/L</div>
+          <div style="font-size:20px;font-weight:700;color:${popupColor}">${s.price.toFixed(1)}p/L</div>
           <div style="font-size:11px;color:#9ca3af">£${fillCost(s.price)} / ${FILL_LITRES}L · ${s.distanceMiles.toFixed(1)} mi</div>
         </div>`);
+    marker._nodeId    = s.node_id;
+    marker._price     = s.price;
+    marker._cheapest  = cheapest;
+    marker._priciest  = priciest;
+    marker._isPinned  = isPinned;
     mapMarkers.push(marker);
   });
 
@@ -315,8 +340,7 @@ function renderResults(stations, fuelType, elapsed, mode) {
   const range    = priciest - cheapest || 1;
 
   stationListEl.innerHTML = stations.map((s, i) => {
-    const pct      = ((s.price - cheapest) / range) * 100;
-    const color    = pct < 33 ? '#059669' : pct < 66 ? '#d97706' : '#dc2626';
+    const color    = priceColor(s.price, cheapest);
     const medal    = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
     const isPinned = pinned.includes(s.node_id);
     return `
@@ -342,6 +366,41 @@ function renderResults(stations, fuelType, elapsed, mode) {
 
   stationListEl.querySelectorAll('.pin-btn').forEach(btn => {
     btn.addEventListener('click', e => { e.stopPropagation(); togglePin(btn.dataset.node); });
+  });
+
+  // Click card → highlight card + map marker
+  let highlightedNode = null;
+  stationListEl.querySelectorAll('.station-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const nodeId = card.dataset.node;
+      highlightStation(nodeId === highlightedNode ? null : nodeId);
+      highlightedNode = nodeId === highlightedNode ? null : nodeId;
+    });
+  });
+}
+
+function highlightStation(nodeId) {
+  // Cards
+  stationListEl.querySelectorAll('.station-card').forEach(card => {
+    if (nodeId && card.dataset.node === nodeId) {
+      card.classList.add('highlighted');
+    } else {
+      card.classList.remove('highlighted');
+    }
+  });
+
+  // Map markers
+  mapMarkers.forEach(marker => {
+    const isThis     = marker._nodeId === nodeId;
+    const isPinned   = marker._isPinned;
+    const icon = makeMarkerIcon(
+      marker._price, marker._cheapest, marker._priciest, isPinned, isThis
+    );
+    marker.setIcon(icon);
+    if (isThis) {
+      marker.openPopup();
+      leafletMap.panTo(marker.getLatLng(), { animate: true });
+    }
   });
 }
 

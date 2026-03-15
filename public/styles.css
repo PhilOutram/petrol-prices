@@ -264,6 +264,13 @@ body {
   border-color: var(--accent);
   background: linear-gradient(135deg, #eff6ff 0%, var(--surface) 100%);
 }
+.station-card.highlighted {
+  border-color: #facc15;
+  border-width: 2.5px;
+  box-shadow: 0 0 0 3px rgba(250,204,21,0.3), var(--shadow-md);
+  background: linear-gradient(135deg, #fefce8 0%, var(--surface) 100%);
+}
+.station-card { cursor: pointer; }
 .station-rank { font-size: 18px; width: 26px; text-align: center; flex-shrink: 0; }
 .station-info { flex: 1; min-width: 0; }
 .station-name {
