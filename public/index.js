@@ -3,11 +3,12 @@
 // ================================================================
 const PROFILE_KEY    = 'fuelscan_profile';
 const FAV_KEY        = 'fuelscan_favourite';
-const PINNED_KEY     = 'fuelscan_pinned';      // up to 3 pinned stations
+const PINNED_KEY     = 'fuelscan_pinned';
 const FINGERPRINT_N  = 5;
 const NEARBY_COUNT   = 20;
 const FILL_LITRES    = 60;
 const EARTH_RADIUS_M = 6371000;
+const STATUS_HIDE_MS = 3000;   // ms after which status bar auto-hides
 
 // ── DOM ──────────────────────────────────────────────────────────
 const postcodeInput   = document.getElementById('postcode-input');
@@ -16,31 +17,38 @@ const gpsBtn          = document.getElementById('gps-btn');
 const favBtn          = document.getElementById('fav-btn');
 const radiusSelect    = document.getElementById('radius-select');
 const fuelSelect      = document.getElementById('fuel-select');
-const mapToggle       = document.getElementById('map-toggle');
 const statusEl        = document.getElementById('status');
-const profileBar      = document.getElementById('profile-bar');
-const profileText     = document.getElementById('profile-text');
 const resetProfileBtn = document.getElementById('reset-profile-btn');
 const summaryBar      = document.getElementById('summary-bar');
 const mapWrap         = document.getElementById('map-wrap');
+const searchHereBtn   = document.getElementById('search-here-btn');
 const resultsEl       = document.getElementById('results');
 const resultsTitleEl  = document.getElementById('results-title');
 const resultsMetaEl   = document.getElementById('results-meta');
 const stationListEl   = document.getElementById('station-list');
 
 // ── State ─────────────────────────────────────────────────────────
-let leafletMap    = null;
-let mapMarkers    = [];
-let lastStations  = [];
-let lastLat       = null;
-let lastLng       = null;
+let leafletMap      = null;
+let mapMarkers      = [];
+let lastStations    = [];
+let lastLat         = null;
+let lastLng         = null;
+let statusHideTimer = null;
+let mapMoved        = false;   // tracks whether user has panned/zoomed
 
 // ── Helpers ───────────────────────────────────────────────────────
-function showStatus(msg, type = 'loading') {
+function showStatus(msg, type = 'loading', autoHide = false) {
+  clearTimeout(statusHideTimer);
   statusEl.innerHTML = msg;
   statusEl.className = `status ${type}`;
+  if (autoHide) {
+    statusHideTimer = setTimeout(hideStatus, STATUS_HIDE_MS);
+  }
 }
-function hideStatus() { statusEl.className = 'status hidden'; }
+function hideStatus() {
+  statusEl.className = 'status hidden';
+  clearTimeout(statusHideTimer);
+}
 
 function distanceMetres(lat1, lng1, lat2, lng2) {
   const toRad = d => d * Math.PI / 180;
@@ -57,10 +65,8 @@ function fillCost(pricePence) { return ((pricePence / 100) * FILL_LITRES).toFixe
 function loadProfile()  { try { return JSON.parse(localStorage.getItem(PROFILE_KEY)) || null; } catch { return null; } }
 function saveProfile(p) { localStorage.setItem(PROFILE_KEY, JSON.stringify(p)); }
 function clearProfile() { localStorage.removeItem(PROFILE_KEY); }
-
 function loadFav()      { try { return JSON.parse(localStorage.getItem(FAV_KEY)) || null; } catch { return null; } }
 function saveFav(f)     { localStorage.setItem(FAV_KEY, JSON.stringify(f)); }
-
 function loadPinned()   { try { return JSON.parse(localStorage.getItem(PINNED_KEY)) || []; } catch { return []; } }
 function savePinned(p)  { localStorage.setItem(PINNED_KEY, JSON.stringify(p)); }
 
@@ -73,7 +79,7 @@ function updateFavBtn() {
     favBtn.classList.add('fav-ready');
   } else {
     favBtn.disabled = true;
-    favBtn.title    = 'Favourite available after first search';
+    favBtn.title    = 'Available after first search';
     favBtn.classList.remove('fav-ready');
   }
 }
@@ -101,34 +107,38 @@ function filterStations(stations, lat, lng, radiusMiles, fuelType) {
 
 // ── API fetch ─────────────────────────────────────────────────────
 async function fetchFast(batches) {
-  const res  = await fetch(`/api/fuel?batches=${batches.join(',')}`);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Fast fetch failed');
-  return data;
+  // Show progress ticking up while waiting
+  let tick = 0;
+  const total = batches.length;
+  const interval = setInterval(() => {
+    tick = Math.min(tick + 1, total);
+    showStatus(`⚡ Fast lookup — checking batch ${tick} of ${total}…`);
+  }, 300);
+  try {
+    const res  = await fetch(`/api/fuel?batches=${batches.join(',')}`);
+    clearInterval(interval);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Fast fetch failed');
+    return data;
+  } catch(err) {
+    clearInterval(interval);
+    throw err;
+  }
 }
 
 async function fetchDiscovery() {
-  // Stream-style: fetch with progress updates
-  // We know ~15 batches; show progress as groups complete
-  // We call the endpoint which handles parallelism, but show a count-up
-  let done = false;
-  let batchCount = 0;
+  let tick = 0;
   const interval = setInterval(() => {
-    if (!done) {
-      batchCount = Math.min(batchCount + 1, 14);
-      showStatus(`🔍 Collecting petrol stations… batch ${batchCount} of 15`);
-    }
+    tick = Math.min(tick + 1, 14);
+    showStatus(`🔍 Collecting petrol stations… batch ${tick} of 15`);
   }, 320);
-
   try {
     const res  = await fetch('/api/fuel');
-    const data = await res.json();
-    done = true;
     clearInterval(interval);
+    const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Discovery fetch failed');
     return data;
-  } catch (err) {
-    done = true;
+  } catch(err) {
     clearInterval(interval);
     throw err;
   }
@@ -184,20 +194,18 @@ function renderSummary(stations) {
   const expens = stations[stations.length - 1];
   const saving = (expens.price - cheap.price) / 100 * FILL_LITRES;
 
-  const shortName = s => s.trading_name.length > 22
-    ? s.trading_name.slice(0, 22) + '…'
-    : s.trading_name;
+  const shortName = s => s.trading_name.length > 18
+    ? s.trading_name.slice(0, 18) + '…' : s.trading_name;
 
   document.getElementById('sum-cheap-name').textContent  = shortName(cheap);
-  document.getElementById('sum-cheap-price').textContent = `${cheap.price.toFixed(1)}p/L`;
-  document.getElementById('sum-cheap-fill').textContent  = `£${fillCost(cheap.price)} for ${FILL_LITRES}L`;
+  document.getElementById('sum-cheap-price').textContent = `${cheap.price.toFixed(1)}p`;
+  document.getElementById('sum-cheap-fill').textContent  = `£${fillCost(cheap.price)}`;
 
   document.getElementById('sum-exp-name').textContent    = shortName(expens);
-  document.getElementById('sum-exp-price').textContent   = `${expens.price.toFixed(1)}p/L`;
-  document.getElementById('sum-exp-fill').textContent    = `£${fillCost(expens.price)} for ${FILL_LITRES}L`;
+  document.getElementById('sum-exp-price').textContent   = `${expens.price.toFixed(1)}p`;
+  document.getElementById('sum-exp-fill').textContent    = `£${fillCost(expens.price)}`;
 
   document.getElementById('sum-saving').textContent      = `£${saving.toFixed(2)}`;
-  document.getElementById('sum-saving-desc').textContent = `saved on a ${FILL_LITRES}L fill`;
 
   summaryBar.classList.remove('hidden');
 }
@@ -210,70 +218,77 @@ function initMap(lat, lng) {
       attribution: '© OpenStreetMap © CARTO',
       maxZoom: 19,
     }).addTo(leafletMap);
+
+    // Show "Search here" button when user moves the map
+    leafletMap.on('movestart', () => {
+      if (lastStations.length) {
+        mapMoved = true;
+        searchHereBtn.classList.remove('hidden');
+      }
+    });
   } else {
     leafletMap.setView([lat, lng], 12);
   }
 }
 
-function makeMarkerIcon(price, cheapest, priciest, pinned) {
+function makeMarkerIcon(price, cheapest, priciest, isPinned) {
   const range = priciest - cheapest || 1;
   const pct   = (price - cheapest) / range;
   const color = pct < 0.33 ? '#059669' : pct < 0.66 ? '#d97706' : '#dc2626';
-  const border = pinned ? '#2563eb' : '#fff';
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="44" height="52" viewBox="0 0 44 52">
-      <ellipse cx="22" cy="48" rx="8" ry="4" fill="rgba(0,0,0,0.15)"/>
-      <path d="M22 2 C12 2 4 10 4 20 C4 34 22 48 22 48 C22 48 40 34 40 20 C40 10 32 2 22 2Z"
-            fill="${color}" stroke="${border}" stroke-width="2.5"/>
-      <text x="22" y="23" text-anchor="middle" font-size="11" font-weight="700"
-            font-family="DM Mono,monospace" fill="white">${price.toFixed(1)}</text>
-    </svg>`;
+  const border = isPinned ? '#2563eb' : 'white';
+  const bw     = isPinned ? 3 : 2;
+  // Wider, squatter shape: 48w × 44h, text centred better
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="52" height="46" viewBox="0 0 52 46">
+    <ellipse cx="26" cy="43" rx="9" ry="3.5" fill="rgba(0,0,0,0.15)"/>
+    <path d="M26 3 C14 3 6 11 6 21 C6 33 26 43 26 43 C26 43 46 33 46 21 C46 11 38 3 26 3Z"
+          fill="${color}" stroke="${border}" stroke-width="${bw}"/>
+    <text x="26" y="25" text-anchor="middle" dominant-baseline="middle"
+          font-size="12" font-weight="700"
+          font-family="DM Mono,monospace" fill="white">${price.toFixed(1)}</text>
+  </svg>`;
   return L.divIcon({
-    html: svg, className: '', iconSize: [44, 52], iconAnchor: [22, 48], popupAnchor: [0, -50],
+    html: svg, className: '',
+    iconSize: [52, 46], iconAnchor: [26, 43], popupAnchor: [0, -45],
   });
 }
 
 function renderMap(stations, lat, lng, fuelType, pinned) {
+  mapWrap.classList.remove('hidden');
   initMap(lat, lng);
   mapMarkers.forEach(m => m.remove());
   mapMarkers = [];
 
-  const cheapest = stations[0]?.price ?? 0;
-  const priciest = stations[stations.length-1]?.price ?? 0;
+  const cheapest  = stations[0]?.price ?? 0;
+  const priciest  = stations[stations.length-1]?.price ?? 0;
   const pinnedIds = new Set(pinned);
 
-  // User location marker
+  // User dot
   const userIcon = L.divIcon({
     html: `<div style="width:14px;height:14px;background:#2563eb;border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>`,
     className: '', iconSize: [14,14], iconAnchor: [7,7],
   });
   L.marker([lat, lng], { icon: userIcon }).addTo(leafletMap)
-    .bindPopup('<strong>Your location</strong>');
+   .bindPopup('<strong>Your location</strong>');
 
   stations.forEach(s => {
     const isPinned = pinnedIds.has(s.node_id);
-    const icon = makeMarkerIcon(s.price, cheapest, priciest, isPinned);
-    const marker = L.marker([s.latitude, s.longitude], { icon })
+    const icon     = makeMarkerIcon(s.price, cheapest, priciest, isPinned);
+    const marker   = L.marker([s.latitude, s.longitude], { icon })
       .addTo(leafletMap)
       .bindPopup(`
         <div style="font-family:'DM Sans',sans-serif;min-width:160px">
-          <div style="font-weight:700;font-size:13px;margin-bottom:4px">${s.trading_name}</div>
-          <div style="color:#6b7280;font-size:12px;margin-bottom:6px">${s.address || s.postcode || ''}</div>
-          <div style="font-size:20px;font-weight:700;color:${s.price === cheapest ? '#059669' : '#1a1a2e'}">${s.price.toFixed(1)}p</div>
-          <div style="font-size:11px;color:#9ca3af">£${fillCost(s.price)} / ${FILL_LITRES}L · ${s.distanceMiles.toFixed(1)}mi</div>
+          <div style="font-weight:700;font-size:13px;margin-bottom:3px">${s.trading_name}</div>
+          <div style="color:#6b7280;font-size:12px;margin-bottom:5px">${s.address || s.postcode || ''}</div>
+          <div style="font-size:20px;font-weight:700;color:${s.price===cheapest?'#059669':'#111827'}">${s.price.toFixed(1)}p/L</div>
+          <div style="font-size:11px;color:#9ca3af">£${fillCost(s.price)} / ${FILL_LITRES}L · ${s.distanceMiles.toFixed(1)} mi</div>
         </div>`);
     mapMarkers.push(marker);
   });
 
-  // Fit map to markers
   if (stations.length > 0) {
-    const bounds = L.latLngBounds(
-      [[lat, lng], ...stations.map(s => [s.latitude, s.longitude])]
-    );
+    const bounds = L.latLngBounds([[lat, lng], ...stations.map(s => [s.latitude, s.longitude])]);
     leafletMap.fitBounds(bounds, { padding: [40, 40] });
   }
-
-  // Invalidate size in case map was hidden
   setTimeout(() => leafletMap.invalidateSize(), 100);
 }
 
@@ -286,7 +301,8 @@ function renderResults(stations, fuelType, elapsed, mode) {
   const pinned = loadPinned();
 
   resultsTitleEl.textContent = `${stations.length} station${stations.length !== 1 ? 's' : ''} nearby`;
-  resultsMetaEl.textContent  = `${fuelLabels[fuelType] || fuelType} · ${elapsed}s · ${mode === 'fast' ? '⚡ fast' : '🔍 full search'}`;
+  resultsMetaEl.textContent  =
+    `${fuelLabels[fuelType] || fuelType} · ${elapsed}s · ${mode === 'fast' ? '⚡ fast' : '🔍 full search'}`;
 
   if (stations.length === 0) {
     stationListEl.innerHTML = '<p class="no-results">No stations found. Try a wider radius.</p>';
@@ -314,9 +330,8 @@ function renderResults(stations, fuelType, elapsed, mode) {
         <div class="station-right">
           <div class="station-price" style="color:${color}">${s.price.toFixed(1)}p</div>
           <div class="station-fill">£${fillCost(s.price)}</div>
-          <button class="pin-btn ${isPinned ? 'pinned' : ''}"
-                  data-node="${s.node_id}"
-                  title="${isPinned ? 'Remove favourite' : 'Add to favourites'}">
+          <button class="pin-btn ${isPinned ? 'pinned' : ''}" data-node="${s.node_id}"
+                  title="${isPinned ? 'Remove favourite' : 'Favourite this station'}">
             ${isPinned ? '★' : '☆'}
           </button>
         </div>
@@ -325,52 +340,33 @@ function renderResults(stations, fuelType, elapsed, mode) {
 
   resultsEl.classList.remove('hidden');
 
-  // Pin button handlers
   stationListEl.querySelectorAll('.pin-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      togglePin(btn.dataset.node);
-    });
+    btn.addEventListener('click', e => { e.stopPropagation(); togglePin(btn.dataset.node); });
   });
 }
 
-// ── Pin/unpin stations ────────────────────────────────────────────
+// ── Pin/unpin ─────────────────────────────────────────────────────
 function togglePin(nodeId) {
   let pinned = loadPinned();
   if (pinned.includes(nodeId)) {
     pinned = pinned.filter(id => id !== nodeId);
   } else {
     if (pinned.length >= 3) {
-      showStatus('⚠️ You can favourite up to 3 stations. Remove one first.', 'error');
-      setTimeout(hideStatus, 2500);
+      showStatus('⚠️ You can favourite up to 3 stations. Remove one first.', 'error', true);
       return;
     }
     pinned.push(nodeId);
   }
   savePinned(pinned);
-
-  // Re-render cards and map markers
   if (lastStations.length) {
-    renderResults(lastStations, fuelSelect.value, '', lastStations._mode || 'fast');
-    if (mapToggle.checked && lastLat !== null) {
-      renderMap(lastStations, lastLat, lastLng, fuelSelect.value, pinned);
-    }
+    renderResults(lastStations, fuelSelect.value, '', 'fast');
+    if (lastLat !== null) renderMap(lastStations, lastLat, lastLng, fuelSelect.value, pinned);
   }
 }
 
-// ── Profile bar ───────────────────────────────────────────────────
-function updateProfileBar(profile) {
-  if (!profile) { profileBar.classList.add('hidden'); return; }
-  const age    = Math.round((Date.now() - new Date(profile.builtAt)) / 60000);
-  const ageStr = age < 60 ? `${age}m ago` : `${Math.round(age/60)}h ago`;
-  profileText.textContent =
-    `⚡ Fast lookup active — batches ${profile.batches.join(', ')} · built ${ageStr}`;
-  profileBar.classList.remove('hidden');
-}
-
 // ── Main search ───────────────────────────────────────────────────
-async function doSearch(lat, lng, postcode) {
-  const radiusMiles = parseFloat(radiusSelect.value);
+async function doSearch(lat, lng, postcode, saveAsFav = true, overrideRadius = null) {
+  const radiusMiles = overrideRadius !== null ? overrideRadius : parseFloat(radiusSelect.value);
   const fuelType    = fuelSelect.value;
   const fuelLabels  = {
     'E10': 'Petrol (E10)', 'E5': 'Petrol (E5)',
@@ -379,16 +375,17 @@ async function doSearch(lat, lng, postcode) {
   const t0 = Date.now();
 
   lastLat = lat; lastLng = lng;
+  mapMoved = false;
+  searchHereBtn.classList.add('hidden');
   resultsEl.classList.add('hidden');
   summaryBar.classList.add('hidden');
   stationListEl.innerHTML = '';
 
   const profile = loadProfile();
 
-  // Fast path
+  // ── Fast path ──────────────────────────────────────────────────
   if (profile?.batches?.length) {
-    const batchStr = profile.batches.join(', ');
-    showStatus(`⚡ Fast lookup — checking batches ${batchStr}…`);
+    showStatus(`⚡ Fast lookup — checking batch 1 of ${profile.batches.length}…`);
     try {
       const data = await fetchFast(profile.batches);
       const ok   = verifyFingerprint(data.stations, profile.fingerprint);
@@ -396,12 +393,11 @@ async function doSearch(lat, lng, postcode) {
         const nearby  = filterStations(data.stations, lat, lng, radiusMiles, fuelType);
         const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
         lastStations  = nearby;
-        hideStatus();
-        updateProfileBar(profile);
+        showStatus(`✓ Found ${nearby.length} stations in ${elapsed}s`, 'loading', true);
         renderSummary(nearby);
+        renderMap(nearby, lat, lng, fuelType, loadPinned());
         renderResults(nearby, fuelType, elapsed, 'fast');
-        if (mapToggle.checked) renderMap(nearby, lat, lng, fuelType, loadPinned());
-        saveFavIfNew(postcode, lat, lng, fuelType, fuelLabels, radiusMiles);
+        if (saveAsFav) saveFavSettings(postcode, lat, lng, fuelType, fuelLabels, radiusMiles);
         updateFavBtn();
         return;
       }
@@ -412,8 +408,7 @@ async function doSearch(lat, lng, postcode) {
     }
   }
 
-  // Discovery path
-  showStatus('🔍 Collecting petrol stations… batch 1 of 15');
+  // ── Discovery path ─────────────────────────────────────────────
   try {
     const data    = await fetchDiscovery();
     const newProf = buildProfile(data.stations, lat, lng, fuelType);
@@ -422,50 +417,59 @@ async function doSearch(lat, lng, postcode) {
     const nearby  = filterStations(data.stations, lat, lng, radiusMiles, fuelType);
     const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
     lastStations  = nearby;
-    hideStatus();
-    updateProfileBar(newProf);
+    showStatus(`✓ Found ${nearby.length} stations in ${elapsed}s`, 'loading', true);
     renderSummary(nearby);
+    renderMap(nearby, lat, lng, fuelType, loadPinned());
     renderResults(nearby, fuelType, elapsed, 'discovery');
-    if (mapToggle.checked) renderMap(nearby, lat, lng, fuelType, loadPinned());
-    saveFavIfNew(postcode, lat, lng, fuelType, fuelLabels, radiusMiles);
+    if (saveAsFav) saveFavSettings(postcode, lat, lng, fuelType, fuelLabels, radiusMiles);
     updateFavBtn();
   } catch(err) {
     showStatus('❌ ' + err.message, 'error');
   }
 }
 
-function saveFavIfNew(postcode, lat, lng, fuelType, fuelLabels, radius) {
-  // Always update favourite with latest search settings
-  saveFav({
-    postcode: postcode || null,
-    lat, lng,
-    fuelType,
-    fuelLabel: fuelLabels[fuelType] || fuelType,
-    radius,
-  });
+function saveFavSettings(postcode, lat, lng, fuelType, fuelLabels, radius) {
+  saveFav({ postcode: postcode || null, lat, lng, fuelType, fuelLabel: fuelLabels[fuelType] || fuelType, radius });
 }
+
+// ── Search here (map pan) ─────────────────────────────────────────
+searchHereBtn.addEventListener('click', () => {
+  const centre = leafletMap.getCenter();
+  const bounds = leafletMap.getBounds();
+  // Radius = distance from centre to nearest edge midpoint (in miles)
+  const northMid = L.latLng(bounds.getNorth(), centre.lng);
+  const radiusM  = leafletMap.distance(centre, northMid);
+  const radiusMi = radiusM / 1609.344;
+
+  // Temporarily override radius select for this search
+  const prevRadius = radiusSelect.value;
+  // We pass the computed radius directly into filterStations via a one-off search
+  searchHereBtn.classList.add('hidden');
+  mapMoved = false;
+  doSearch(centre.lat, centre.lng, null, false, radiusMi);
+});
 
 // ── Events ────────────────────────────────────────────────────────
 searchBtn.addEventListener('click', async () => {
   const postcode = postcodeInput.value.trim().toUpperCase();
-  if (!postcode) { showStatus('Please enter a postcode', 'error'); return; }
+  if (!postcode) { showStatus('Please enter a postcode', 'error', true); return; }
   showStatus('📍 Looking up postcode…');
   try {
     const { lat, lng } = await postcodeToLatLng(postcode);
     await doSearch(lat, lng, postcode);
   } catch(err) {
-    showStatus('❌ ' + err.message, 'error');
+    showStatus('❌ ' + err.message, 'error', true);
   }
 });
 
 postcodeInput.addEventListener('keydown', e => { if (e.key === 'Enter') searchBtn.click(); });
 
 gpsBtn.addEventListener('click', () => {
-  if (!navigator.geolocation) { showStatus('❌ Geolocation not supported', 'error'); return; }
+  if (!navigator.geolocation) { showStatus('❌ Geolocation not supported', 'error', true); return; }
   showStatus('📍 Getting your location…');
   navigator.geolocation.getCurrentPosition(
     pos => doSearch(pos.coords.latitude, pos.coords.longitude, null),
-    ()  => showStatus('❌ Location access denied', 'error')
+    ()  => showStatus('❌ Location access denied', 'error', true)
   );
 });
 
@@ -474,32 +478,14 @@ favBtn.addEventListener('click', () => {
   if (!fav) return;
   radiusSelect.value = fav.radius;
   fuelSelect.value   = fav.fuelType;
-  if (fav.postcode) {
-    postcodeInput.value = fav.postcode;
-    doSearch(fav.lat, fav.lng, fav.postcode);
-  } else {
-    doSearch(fav.lat, fav.lng, null);
-  }
+  if (fav.postcode) postcodeInput.value = fav.postcode;
+  doSearch(fav.lat, fav.lng, fav.postcode || null);
 });
 
 resetProfileBtn.addEventListener('click', () => {
   clearProfile();
-  updateProfileBar(null);
-  showStatus('Profile cleared — next search will do a full lookup', 'loading');
-  setTimeout(hideStatus, 2500);
-});
-
-mapToggle.addEventListener('change', () => {
-  if (mapToggle.checked) {
-    mapWrap.classList.remove('hidden');
-    if (lastStations.length && lastLat !== null) {
-      renderMap(lastStations, lastLat, lastLng, fuelSelect.value, loadPinned());
-    }
-  } else {
-    mapWrap.classList.add('hidden');
-  }
+  showStatus('Profile cleared — next search will do a full lookup', 'loading', true);
 });
 
 // ── Init ──────────────────────────────────────────────────────────
-updateProfileBar(loadProfile());
 updateFavBtn();
