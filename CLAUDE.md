@@ -36,8 +36,9 @@ the functions are plain CommonJS modules using only Node built-ins (`https`, `zl
 ## Environment variables (set in Vercel dashboard)
 
 - `FUEL_CLIENT_ID`, `FUEL_CLIENT_SECRET` — OAuth client-credentials for the Fuel Finder portal.
-- `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` — auto-provisioned when you add the
-  Upstash Redis integration from the Vercel Marketplace. Back the shared price cache. Only
+- Upstash Redis REST creds — auto-provisioned by the Vercel Upstash integration as
+  `KV_REST_API_URL` / `KV_REST_API_TOKEN` (a direct Upstash setup names them
+  `UPSTASH_REDIS_REST_*`). `lib/redis.js` accepts either. Back the shared price cache. Only
   `api/refresh.js` needs the Fuel credentials; `api/fuel.js` only reads Redis.
 
 ## Architecture
