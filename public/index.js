@@ -1,11 +1,8 @@
 // ================================================================
 // FuelScan — Main App
 // ================================================================
-const PROFILE_KEY    = 'fuelscan_profile';
 const FAV_KEY        = 'fuelscan_favourite';
 const PINNED_KEY     = 'fuelscan_pinned';
-const FINGERPRINT_N  = 5;
-const NEARBY_COUNT   = 20;
 const FILL_LITRES    = 60;
 const EARTH_RADIUS_M = 6371000;
 const STATUS_HIDE_MS = 3000;   // ms after which status bar auto-hides
@@ -30,11 +27,16 @@ const stationListEl   = document.getElementById('station-list');
 // ── State ─────────────────────────────────────────────────────────
 let leafletMap      = null;
 let mapMarkers      = [];
-let lastStations    = [];
+let lastStations    = [];      // filtered list currently shown (used by pin re-render)
 let lastLat         = null;
 let lastLng         = null;
 let statusHideTimer = null;
 let mapMoved        = false;   // tracks whether user has panned/zoomed
+let datasetStations = [];      // full UK station list from the shared cache
+let currentQuery    = null;    // { lat, lng, radiusMiles, fuelType, postcode, saveAsFav }
+let refreshing      = false;   // true while a background/foreground refresh is in flight
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ── Helpers ───────────────────────────────────────────────────────
 function showStatus(msg, type = 'loading', autoHide = false) {
@@ -62,9 +64,6 @@ function metresToMiles(m) { return m / 1609.344; }
 function fillCost(pricePence) { return ((pricePence / 100) * FILL_LITRES).toFixed(2); }
 
 // ── Storage ───────────────────────────────────────────────────────
-function loadProfile()  { try { return JSON.parse(localStorage.getItem(PROFILE_KEY)) || null; } catch { return null; } }
-function saveProfile(p) { localStorage.setItem(PROFILE_KEY, JSON.stringify(p)); }
-function clearProfile() { localStorage.removeItem(PROFILE_KEY); }
 function loadFav()      { try { return JSON.parse(localStorage.getItem(FAV_KEY)) || null; } catch { return null; } }
 function saveFav(f)     { localStorage.setItem(FAV_KEY, JSON.stringify(f)); }
 function loadPinned()   { try { return JSON.parse(localStorage.getItem(PINNED_KEY)) || []; } catch { return []; } }
@@ -105,86 +104,28 @@ function filterStations(stations, lat, lng, radiusMiles, fuelType) {
     .sort((a, b) => a.price - b.price);
 }
 
-// ── API fetch ─────────────────────────────────────────────────────
-async function fetchFast(batches) {
-  // Show progress ticking up while waiting
-  let tick = 0;
-  const total = batches.length;
-  const interval = setInterval(() => {
-    tick = Math.min(tick + 1, total);
-    showStatus(`⚡ Fast lookup — checking batch ${tick} of ${total}…`);
-  }, 300);
-  try {
-    const res  = await fetch(`/api/fuel?batches=${batches.join(',')}`);
-    clearInterval(interval);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Fast fetch failed');
-    return data;
-  } catch(err) {
-    clearInterval(interval);
-    throw err;
-  }
+// ── Shared cache API ──────────────────────────────────────────────
+// /api/fuel    -> { status: 'fresh'|'stale'|'empty', ageMinutes?, stations? }  (fast read)
+// /api/refresh -> { status: 'fresh', stations } | { status: 'refreshing' }     (does the work)
+async function getCache() {
+  const res  = await fetch('/api/fuel');
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load prices');
+  return data;
 }
 
-async function fetchDiscovery() {
-  let tick = 0;
-  const interval = setInterval(() => {
-    tick = Math.min(tick + 1, 14);
-    showStatus(`🔍 Collecting petrol stations… batch ${tick} of 15`);
-  }, 320);
-  try {
-    const res  = await fetch('/api/fuel');
-    clearInterval(interval);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Discovery fetch failed');
-    return data;
-  } catch(err) {
-    clearInterval(interval);
-    throw err;
-  }
+async function runRefresh() {
+  const res  = await fetch('/api/refresh');
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Refresh failed');
+  return data;
 }
 
-// ── Build profile ─────────────────────────────────────────────────
-function buildProfile(stations, lat, lng, fuelType) {
-  const fuelLabels = {
-    'E10': 'Petrol (E10)', 'E5': 'Petrol (E5)',
-    'B7_STANDARD': 'Diesel', 'B7_PREMIUM': 'Diesel Premium',
-  };
-  const nearby = stations
-    .filter(s => s.latitude != null && s.longitude != null)
-    .map(s => ({ ...s, distanceMiles: metresToMiles(distanceMetres(lat, lng, s.latitude, s.longitude)) }))
-    .filter(s => s.distanceMiles <= 20)
-    .sort((a, b) => a.distanceMiles - b.distanceMiles)
-    .slice(0, NEARBY_COUNT);
-
-  const batchSet = new Set();
-  for (const s of nearby) {
-    const idx = stations.findIndex(st => st.node_id === s.node_id);
-    if (idx >= 0) batchSet.add(Math.floor(idx / 500) + 1);
-  }
-
-  const withPrice = nearby
-    .filter(s => (s.fuel_prices || []).some(fp => fp.fuel_type === fuelType))
-    .sort((a, b) => {
-      const pa = a.fuel_prices.find(fp => fp.fuel_type === fuelType)?.price ?? 999;
-      const pb = b.fuel_prices.find(fp => fp.fuel_type === fuelType)?.price ?? 999;
-      return pa - pb;
-    });
-  const fingerprint = withPrice.slice(0, FINGERPRINT_N).map(s => s.node_id);
-
-  return {
-    lat, lng,
-    batches: [...batchSet].sort((a,b) => a-b),
-    fingerprint,
-    fuelType,
-    fuelLabel: fuelLabels[fuelType] || fuelType,
-    builtAt: new Date().toISOString(),
-  };
-}
-
-function verifyFingerprint(stations, fingerprint) {
-  const nodeIds = new Set(stations.map(s => s.node_id));
-  return fingerprint.every(id => nodeIds.has(id));
+function ageText(min) {
+  if (min < 1)  return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const h = Math.round(min / 60);
+  return `${h} hour${h !== 1 ? 's' : ''} ago`;
 }
 
 // ── Summary bar ───────────────────────────────────────────────────
@@ -326,7 +267,7 @@ function renderMap(stations, lat, lng, fuelType, pinned) {
 }
 
 // ── Station cards ─────────────────────────────────────────────────
-function renderResults(stations, fuelType, elapsed, mode) {
+function renderResults(stations, fuelType, elapsed, note) {
   const fuelLabels = {
     'E10': 'Petrol E10', 'E5': 'Petrol E5',
     'B7_STANDARD': 'Diesel', 'B7_PREMIUM': 'Diesel Premium',
@@ -334,8 +275,10 @@ function renderResults(stations, fuelType, elapsed, mode) {
   const pinned = loadPinned();
 
   resultsTitleEl.textContent = `${stations.length} station${stations.length !== 1 ? 's' : ''} nearby`;
-  resultsMetaEl.textContent  =
-    `${fuelLabels[fuelType] || fuelType} · ${elapsed}s · ${mode === 'fast' ? '⚡ fast' : '🔍 full search'}`;
+  const metaBits = [fuelLabels[fuelType] || fuelType];
+  if (elapsed) metaBits.push(`${elapsed}s`);
+  if (note)    metaBits.push(note);
+  resultsMetaEl.textContent = metaBits.join(' · ');
 
   if (stations.length === 0) {
     stationListEl.innerHTML = '<p class="no-results">No stations found. Try a wider radius.</p>';
@@ -426,7 +369,7 @@ function togglePin(nodeId) {
   }
   savePinned(pinned);
   if (lastStations.length) {
-    renderResults(lastStations, fuelSelect.value, '', 'fast');
+    renderResults(lastStations, fuelSelect.value, '', '');
     if (lastLat !== null) renderMap(lastStations, lastLat, lastLng, fuelSelect.value, pinned);
   }
 }
@@ -435,11 +378,7 @@ function togglePin(nodeId) {
 async function doSearch(lat, lng, postcode, saveAsFav = true, overrideRadius = null) {
   const radiusMiles = overrideRadius !== null ? overrideRadius : parseFloat(radiusSelect.value);
   const fuelType    = fuelSelect.value;
-  const fuelLabels  = {
-    'E10': 'Petrol (E10)', 'E5': 'Petrol (E5)',
-    'B7_STANDARD': 'Diesel', 'B7_PREMIUM': 'Diesel Premium',
-  };
-  const t0 = Date.now();
+  currentQuery = { lat, lng, radiusMiles, fuelType, postcode, saveAsFav };
 
   lastLat = lat; lastLng = lng;
   mapMoved = false;
@@ -448,51 +387,122 @@ async function doSearch(lat, lng, postcode, saveAsFav = true, overrideRadius = n
   summaryBar.classList.add('hidden');
   stationListEl.innerHTML = '';
 
-  const profile = loadProfile();
+  const t0 = Date.now();
+  showStatus('🔍 Loading fuel prices…');
 
-  // ── Fast path ──────────────────────────────────────────────────
-  if (profile?.batches?.length) {
-    showStatus(`⚡ Fast lookup — checking batch 1 of ${profile.batches.length}…`);
-    try {
-      const data = await fetchFast(profile.batches);
-      const ok   = verifyFingerprint(data.stations, profile.fingerprint);
-      if (ok) {
-        const nearby  = filterStations(data.stations, lat, lng, radiusMiles, fuelType);
-        const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
-        lastStations  = nearby;
-        showStatus(`✓ Found ${nearby.length} stations in ${elapsed}s`, 'loading', true);
-        renderSummary(nearby);
-        renderMap(nearby, lat, lng, fuelType, loadPinned());
-        renderResults(nearby, fuelType, elapsed, 'fast');
-        if (saveAsFav) saveFavSettings(postcode, lat, lng, fuelType, fuelLabels, radiusMiles);
-        updateFavBtn();
-        return;
-      }
-      showStatus('🔍 Data changed — doing full search…');
-      clearProfile();
-    } catch(err) {
-      showStatus('🔍 Falling back to full search…');
-    }
-  }
-
-  // ── Discovery path ─────────────────────────────────────────────
+  let cache;
   try {
-    const data    = await fetchDiscovery();
-    const newProf = buildProfile(data.stations, lat, lng, fuelType);
-    saveProfile(newProf);
-
-    const nearby  = filterStations(data.stations, lat, lng, radiusMiles, fuelType);
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
-    lastStations  = nearby;
-    showStatus(`✓ Found ${nearby.length} stations in ${elapsed}s`, 'loading', true);
-    renderSummary(nearby);
-    renderMap(nearby, lat, lng, fuelType, loadPinned());
-    renderResults(nearby, fuelType, elapsed, 'discovery');
-    if (saveAsFav) saveFavSettings(postcode, lat, lng, fuelType, fuelLabels, radiusMiles);
-    updateFavBtn();
+    cache = await getCache();
   } catch(err) {
     showStatus('❌ ' + err.message, 'error');
+    return;
   }
+
+  if (cache.status === 'empty') {        // nothing usable cached — must wait for a build
+    await coldBuild(t0);
+    return;
+  }
+
+  // We have data (fresh or stale) — show it immediately.
+  datasetStations = cache.stations;
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
+
+  if (cache.status === 'fresh') {
+    showStatus(`✓ ${cache.total_stations.toLocaleString()} stations · prices current`,
+                                                                          'loading', true);
+    renderQuery('live', elapsed);
+  } else {                               // stale: show now, refresh underneath, auto-update
+    const ageTxt = ageText(cache.ageMinutes);
+    showStatus(`⏳ Showing prices from ${ageTxt} — fetching the latest (up to 30s)…`);
+    renderQuery(`from ${ageTxt}`, elapsed);
+    backgroundRefresh();
+  }
+}
+
+// Filter the cached dataset for the current query and render summary + map + list.
+function renderQuery(note, elapsed) {
+  if (!currentQuery) return;
+  const { lat, lng, radiusMiles, fuelType, postcode, saveAsFav } = currentQuery;
+  const fuelLabels = {
+    'E10': 'Petrol (E10)', 'E5': 'Petrol (E5)',
+    'B7_STANDARD': 'Diesel', 'B7_PREMIUM': 'Diesel Premium',
+  };
+  const nearby = filterStations(datasetStations, lat, lng, radiusMiles, fuelType);
+  lastStations = nearby;
+  renderSummary(nearby);
+  renderMap(nearby, lat, lng, fuelType, loadPinned());
+  renderResults(nearby, fuelType, elapsed, note);
+  if (saveAsFav) saveFavSettings(postcode, lat, lng, fuelType, fuelLabels, radiusMiles);
+  updateFavBtn();
+}
+
+// Cold start: no usable cache. Trigger a build and wait, retrying a few times.
+async function coldBuild(t0) {
+  showStatus('⏳ Fetching the latest UK fuel prices (~20s)…');
+  for (let tries = 1; tries <= 4; tries++) {
+    let data;
+    try {
+      data = await runRefresh();
+    } catch(err) {
+      showStatus('❌ ' + err.message, 'error');
+      return;
+    }
+    if (data.status === 'fresh') {
+      datasetStations = data.stations;
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
+      showStatus(`✓ ${data.total_stations.toLocaleString()} stations · prices current`,
+                                                                          'loading', true);
+      renderQuery('live', elapsed);
+      return;
+    }
+    // status 'refreshing' — someone else is building; wait, then re-read the cache.
+    showStatus(`⏳ Fetching the latest prices… (checking again ${tries}/4)`);
+    await sleep(5000);
+    try {
+      const c = await getCache();
+      if (c.status !== 'empty') {
+        datasetStations = c.stations;
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
+        showStatus(`✓ ${c.total_stations.toLocaleString()} stations`, 'loading', true);
+        renderQuery(c.status === 'fresh' ? 'live' : `from ${ageText(c.ageMinutes)}`, elapsed);
+        return;
+      }
+    } catch { /* keep retrying */ }
+  }
+  showStatus('❌ Could not load prices. Please try again in a moment.', 'error');
+}
+
+// Stale path: refresh in the background, then re-render the same query with fresh data.
+async function backgroundRefresh() {
+  if (refreshing) return;
+  refreshing = true;
+  try {
+    let data = await runRefresh();
+    if (data.status === 'refreshing') data = await pollUntilFresh();
+    if (data && data.status === 'fresh' && data.stations) {
+      datasetStations = data.stations;
+      renderQuery('updated just now', '');
+      showStatus('✓ Prices updated — now current', 'loading', true);
+    }
+  } catch(err) {
+    showStatus('⚠️ Couldn\'t fetch the latest — showing recent prices', 'error', true);
+  } finally {
+    refreshing = false;
+  }
+}
+
+// Another client holds the refresh lock — poll the cache until it turns fresh.
+async function pollUntilFresh() {
+  for (let i = 0; i < 6; i++) {
+    await sleep(5000);
+    try {
+      const c = await getCache();
+      if (c.status === 'fresh') {
+        return { status: 'fresh', stations: c.stations, total_stations: c.total_stations };
+      }
+    } catch { /* keep polling */ }
+  }
+  return null;
 }
 
 function saveFavSettings(postcode, lat, lng, fuelType, fuelLabels, radius) {
@@ -546,9 +556,27 @@ favBtn.addEventListener('click', () => {
   doSearch(fav.lat, fav.lng, fav.postcode || null);
 });
 
-resetProfileBtn.addEventListener('click', () => {
-  clearProfile();
-  showStatus('Profile cleared — next search will do a full lookup', 'loading', true);
+// Force a fresh price refresh now (bypasses the 15-min cache window).
+resetProfileBtn.addEventListener('click', async () => {
+  if (refreshing) { showStatus('⏳ A refresh is already running…', 'loading', true); return; }
+  refreshing = true;
+  showStatus('⏳ Forcing a price refresh (~20s)…');
+  try {
+    let data = await runRefresh();
+    if (data.status === 'refreshing') data = await pollUntilFresh();
+    if (data && data.status === 'fresh') {
+      datasetStations = data.stations;
+      showStatus(`✓ Prices refreshed · ${data.total_stations.toLocaleString()} stations`,
+                                                                          'loading', true);
+      if (currentQuery) renderQuery('updated just now', '');
+    } else {
+      showStatus('⏳ Still updating — try your search again shortly', 'loading', true);
+    }
+  } catch(err) {
+    showStatus('❌ ' + err.message, 'error', true);
+  } finally {
+    refreshing = false;
+  }
 });
 
 // ── Init ──────────────────────────────────────────────────────────

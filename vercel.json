@@ -2,5 +2,10 @@
   "outputDirectory": "public",
   "regions": [
     "lhr1"
-  ]
+  ],
+  "functions": {
+    "api/refresh.js": {
+      "maxDuration": 60
+    }
+  }
 }

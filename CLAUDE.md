@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-FuelScan — a UK petrol price finder. A static frontend (`public/`) talks to two Vercel
-serverless functions (`api/`) that proxy the official UK Government Fuel Finder Scheme API.
-There is **no build step, no package.json, no tests, and no lint tooling** — the frontend is
-vanilla HTML/CSS/JS served as static files, and the functions are plain CommonJS modules.
+FuelScan — a UK petrol price finder. A static frontend (`public/`) talks to Vercel serverless
+functions (`api/`, with shared code in `lib/`) that proxy the official UK Government Fuel Finder
+Scheme API and cache results in Upstash Redis. There is **no build step, no package.json, no
+tests, and no lint tooling** — the frontend is vanilla HTML/CSS/JS served as static files, and
+the functions are plain CommonJS modules using only Node built-ins (`https`, `zlib`).
 
 ## Commands
 
@@ -35,6 +36,9 @@ vanilla HTML/CSS/JS served as static files, and the functions are plain CommonJS
 ## Environment variables (set in Vercel dashboard)
 
 - `FUEL_CLIENT_ID`, `FUEL_CLIENT_SECRET` — OAuth client-credentials for the Fuel Finder portal.
+- `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` — auto-provisioned when you add the
+  Upstash Redis integration from the Vercel Marketplace. Back the shared price cache. Only
+  `api/refresh.js` needs the Fuel credentials; `api/fuel.js` only reads Redis.
 
 ## Architecture
 
@@ -48,32 +52,42 @@ Prices are in **pence per litre**. Fuel types: `E10`/`E5` (petrol), `B7_STANDARD
 (diesel). Auth is OAuth 2.0 client-credentials; the access token lives under `data.access_token`
 in the token response. Rate limit: 30 req/min, 1 concurrent request per client.
 
-### `api/fuel.js` — the production endpoint
-Fetches a token, then runs in one of three **modes** based on query params, and always merges
-prices + info into a flat station array (`mergeStations`) before returning:
-- `?batch=N` — single batch (testing).
-- `?batches=3,7,...` — **fast path**: fetch only the named batches in parallel (`Promise.all`).
-- *(no params)* — **discovery**: fetch all batches in parallel groups of `GROUP_SIZE` (5), up to
-  `MAX_BATCHES` (25), stopping when a batch 404s.
+### Shared price cache (the core of the current design)
+The slow multi-batch fetch is done **once per ~15 minutes for all users** and cached in Upstash
+Redis, instead of every browser re-fetching. Two endpoints split read from write:
 
-### `api/fuel-check.js` — diagnostic endpoint
-Always does a full all-batches fetch and returns extra diagnostics (per-batch counts, discovered
-field names, first 10 merged stations). Backs the `check.html` page only. Largely duplicates the
-helpers in `fuel.js` (`httpsRequest`, `getToken`, `fetchBatch`) — if you change request handling
-in one, mirror it in the other.
+- **`api/fuel.js`** — pure cache read (fast, no government API calls, no credentials needed).
+  Returns `{ status, ageMinutes, stations }` where status is `fresh` (<15 min), `stale`
+  (older, still served), or `empty` (nothing cached, or older than 6 h → force a rebuild).
+- **`api/refresh.js`** — does the ~20 s full fetch (`lib/fuelApi.fetchAllStations`) and stores it.
+  Guarded by an atomic Redis lock (`SET … NX EX 40`) so only one client refreshes per window;
+  others get `{ status: 'refreshing' }`. Needs `maxDuration: 60` in `vercel.json`.
 
-### Client fast-path optimization (`public/index.js`)
-The main app avoids re-fetching all ~8,500 stations on every search using a cached **profile** in
-`localStorage`:
-1. First search → **discovery** mode (full fetch). From the 20 nearest stations it records which
-   **batches** they live in and a **fingerprint** (the `node_id`s of the 5 cheapest nearby). This
-   is `buildProfile`.
-2. Subsequent searches → **fast path**: re-fetch only the profiled batches (`?batches=`), then
-   `verifyFingerprint` confirms those `node_id`s still exist. If they do, render; if not (data
-   shifted between batches), clear the profile and fall back to discovery.
+Shared helpers live in **`lib/`** (required from the functions; not routes): `http.js` (the https
+wrapper), `redis.js` (Upstash REST), `cache.js` (gzip + chunked store/load + lock), `fuelApi.js`
+(token + batch fetch + merge/trim). The dataset is gzipped and split into ~700 KB base64 chunks
+to stay under Upstash's free-tier ~1 MB request limit; `fuel:meta` (written last) is the commit
+point. Per-price timestamps are dropped in `mergeStations` since the UI never reads them.
 
-Note `buildProfile` infers a station's batch from its index in the returned array
-(`Math.floor(idx / 500) + 1`), which assumes the upstream array order mirrors batch boundaries.
+### Client data flow (`public/index.js`)
+On each search the browser calls `/api/fuel` and filters the returned dataset locally
+(`filterStations` → `renderQuery`). Behaviour by cache status:
+- **fresh** → render immediately.
+- **stale** → render the old data at once with an age banner ("from 23 min ago"), then
+  `backgroundRefresh()` calls `/api/refresh` and **re-renders with fresh data when it lands**
+  (or `pollUntilFresh` if another client holds the lock). Nobody is left on silent stale data.
+- **empty** → `coldBuild()` shows a "fetching (~20 s)" status and retries the refresh up to 4×.
+
+The header ↺ button (`reset-profile-btn`) now forces an immediate refresh. The old
+`localStorage` "profile"/fingerprint/batch-subset fast-path was **removed** — it caused a bug
+where repeated searches found progressively fewer stations (fragile `idx/500` batch guessing +
+the government API's "1 concurrent request" limit being exceeded by parallel fan-out).
+
+### `api/fuel-check.js` — diagnostic endpoint (unchanged, bypasses the cache)
+Does a direct full all-batches fetch and returns diagnostics (per-batch counts, field names,
+first 10 stations). Backs `check.html` only. Self-contained — it still has its own copies of
+`httpsRequest`/`getToken`/`fetchBatch` and does **not** use `lib/`, so it works as a
+cache-independent way to probe the upstream API.
 
 Other client concerns in `index.js`: postcode→lat/lng via `api.postcodes.io`, Leaflet map with
 price-coloured SVG markers (`priceColor` lerps green→orange→red by pence above cheapest),
