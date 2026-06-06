@@ -526,7 +526,10 @@ if (searchHereBtn) {
 // ── Events ────────────────────────────────────────────────────────
 searchBtn.addEventListener('click', async () => {
   const postcode = postcodeInput.value.trim().toUpperCase();
-  if (!postcode) { showStatus('Please enter a postcode', 'error', true); return; }
+  if (!postcode) {
+    showStatus('Please enter a post code or click 📍 for current location', 'error', true);
+    return;
+  }
   showStatus('📍 Looking up postcode…');
   try {
     const { lat, lng } = await postcodeToLatLng(postcode);

@@ -147,16 +147,29 @@ body {
 .btn-fav.fav-ready:hover { background: #fef3c7; }
 
 /* ── Status ── */
+/* Floating toast — fixed so showing/hiding never reflows the page (no map wobble). */
 .status {
-  padding: 10px 14px;
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%) translateY(0);
+  z-index: 3000;
+  width: max-content;
+  max-width: calc(100% - 28px);
+  padding: 11px 18px;
   border-radius: var(--radius-sm);
-  margin-bottom: 12px;
   font-size: 13px; font-weight: 500;
-  transition: opacity 0.3s;
+  text-align: center;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
+  pointer-events: none;   /* purely informational — never intercepts taps */
+  transition: opacity 0.25s ease, transform 0.25s ease;
 }
 .status.loading { background: var(--accent-lt); color: var(--accent); border: 1px solid var(--accent-bd); }
 .status.error   { background: #fef2f2; color: var(--red); border: 1px solid #fecaca; }
-.status.hidden  { display: none; }
+.status.hidden  {
+  opacity: 0;
+  transform: translateX(-50%) translateY(12px);   /* slides down as it fades out */
+}
 
 /* ── Summary bar ── */
 .summary-bar {
