@@ -296,19 +296,17 @@ function renderMap(stations, lat, lng, fuelType, pinned) {
     const marker   = L.marker([s.latitude, s.longitude], { icon })
       .addTo(leafletMap)
       .bindPopup(`
-        <div style="font-family:'DM Sans',sans-serif;min-width:200px;display:flex;
-                    align-items:flex-end;gap:12px">
-          <div style="flex:1;min-width:0">
-            <div style="font-weight:700;font-size:13px;margin-bottom:3px">${s.trading_name}</div>
-            <div style="color:#6b7280;font-size:12px;margin-bottom:5px">${s.address || s.postcode || ''}</div>
-            <div style="font-size:20px;font-weight:700;color:${popupColor}">${s.price.toFixed(1)}p/L</div>
-            <div style="font-size:11px;color:#9ca3af">£${fillCost(s.price)} / ${FILL_LITRES}L · ${s.distanceMiles.toFixed(1)} mi</div>
-          </div>
+        <div style="font-family:'DM Sans',sans-serif;min-width:200px;position:relative;
+                    padding-right:38px">
+          <div style="font-weight:700;font-size:13px;margin-bottom:3px">${s.trading_name}</div>
+          <div style="color:#6b7280;font-size:12px;margin-bottom:5px">${s.address || s.postcode || ''}</div>
+          <div style="font-size:20px;font-weight:700;color:${popupColor}">${s.price.toFixed(1)}p/L</div>
+          <div style="font-size:11px;color:#9ca3af">£${fillCost(s.price)} / ${FILL_LITRES}L · ${s.distanceMiles.toFixed(1)} mi</div>
           <a href="https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}&travelmode=driving"
              target="_blank" rel="noopener" title="Driving directions"
-             style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:#1a73e8;
-                    display:flex;align-items:center;justify-content:center;text-decoration:none;
-                    box-shadow:0 1px 4px rgba(0,0,0,0.25)">
+             style="position:absolute;right:-6px;bottom:0;width:32px;height:32px;border-radius:50%;
+                    background:#1a73e8;display:flex;align-items:center;justify-content:center;
+                    text-decoration:none;box-shadow:0 1px 4px rgba(0,0,0,0.25)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
           </a>
         </div>`);
