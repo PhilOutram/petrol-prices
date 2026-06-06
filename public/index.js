@@ -306,10 +306,10 @@ function renderMap(stations, lat, lng, fuelType, pinned) {
           </div>
           <a href="https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}&travelmode=driving"
              target="_blank" rel="noopener" title="Driving directions"
-             style="flex-shrink:0;width:46px;height:46px;border-radius:50%;background:#1a73e8;
+             style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:#1a73e8;
                     display:flex;align-items:center;justify-content:center;text-decoration:none;
-                    box-shadow:0 2px 5px rgba(0,0,0,0.25)">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/></svg>
+                    box-shadow:0 1px 4px rgba(0,0,0,0.25)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
           </a>
         </div>`);
     marker._nodeId    = s.node_id;
