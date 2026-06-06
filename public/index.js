@@ -167,9 +167,9 @@ function initMap(lat, lng) {
         searchHereBtn.classList.remove('hidden');
       }
     });
-  } else {
-    leafletMap.setView([lat, lng], 12);
   }
+  // On later renders the view is set by renderMap (fitBounds), or left alone for a
+  // "search here" re-search — so we never yank the map the user just positioned.
 }
 
 // Colour scale: green at cheapest, orange at cheapest+5p, red beyond that
@@ -212,7 +212,7 @@ function makeMarkerIcon(price, cheapest, priciest, isPinned, isHighlighted) {
   });
 }
 
-function renderMap(stations, lat, lng, fuelType, pinned) {
+function renderMap(stations, lat, lng, fuelType, pinned, fitView = true) {
   mapWrap.classList.remove('hidden');
   initMap(lat, lng);
   mapMarkers.forEach(m => m.remove());
@@ -259,7 +259,7 @@ function renderMap(stations, lat, lng, fuelType, pinned) {
     mapMarkers.push(marker);
   });
 
-  if (stations.length > 0) {
+  if (fitView && stations.length > 0) {
     const bounds = L.latLngBounds([[lat, lng], ...stations.map(s => [s.latitude, s.longitude])]);
     leafletMap.fitBounds(bounds, { padding: [40, 40] });
   }
@@ -370,22 +370,22 @@ function togglePin(nodeId) {
   savePinned(pinned);
   if (lastStations.length) {
     renderResults(lastStations, fuelSelect.value, '', '');
-    if (lastLat !== null) renderMap(lastStations, lastLat, lastLng, fuelSelect.value, pinned);
+    if (lastLat !== null) renderMap(lastStations, lastLat, lastLng, fuelSelect.value, pinned, false);
   }
 }
 
 // ── Main search ───────────────────────────────────────────────────
-async function doSearch(lat, lng, postcode, saveAsFav = true, overrideRadius = null) {
+async function doSearch(lat, lng, postcode, saveAsFav = true, overrideRadius = null,
+                                                                          keepView = false) {
   const radiusMiles = overrideRadius !== null ? overrideRadius : parseFloat(radiusSelect.value);
   const fuelType    = fuelSelect.value;
-  currentQuery = { lat, lng, radiusMiles, fuelType, postcode, saveAsFav };
+  currentQuery = { lat, lng, radiusMiles, fuelType, postcode, saveAsFav, keepView };
 
   lastLat = lat; lastLng = lng;
   mapMoved = false;
   searchHereBtn.classList.add('hidden');
-  resultsEl.classList.add('hidden');
-  summaryBar.classList.add('hidden');
-  stationListEl.innerHTML = '';
+  // Note: existing results/summary stay on screen and are replaced in place by renderQuery,
+  // so the layout never collapses and re-expands (which used to jolt the map up and down).
 
   const t0 = Date.now();
   showStatus('🔍 Loading fuel prices…');
@@ -430,7 +430,7 @@ function renderQuery(note, elapsed) {
   const nearby = filterStations(datasetStations, lat, lng, radiusMiles, fuelType);
   lastStations = nearby;
   renderSummary(nearby);
-  renderMap(nearby, lat, lng, fuelType, loadPinned());
+  renderMap(nearby, lat, lng, fuelType, loadPinned(), !currentQuery.keepView);
   renderResults(nearby, fuelType, elapsed, note);
   if (saveAsFav) saveFavSettings(postcode, lat, lng, fuelType, fuelLabels, radiusMiles);
   updateFavBtn();
@@ -519,7 +519,7 @@ if (searchHereBtn) {
     const radiusMi = radiusM / 1609.344;
     searchHereBtn.classList.add('hidden');
     mapMoved = false;
-    doSearch(centre.lat, centre.lng, null, false, radiusMi);
+    doSearch(centre.lat, centre.lng, null, false, radiusMi, true);   // keep the current map view
   });
 }
 
