@@ -27,6 +27,7 @@ const stationListEl   = document.getElementById('station-list');
 // ── State ─────────────────────────────────────────────────────────
 let leafletMap      = null;
 let mapMarkers      = [];
+let userMarker      = null;    // the "your location" dot — tracked so it can be replaced
 let lastStations    = [];      // filtered list currently shown (used by pin re-render)
 let lastLat         = null;
 let lastLng         = null;
@@ -160,9 +161,10 @@ function initMap(lat, lng) {
       maxZoom: 19,
     }).addTo(leafletMap);
 
-    // Show "Search here" button when user moves the map
+    // Show "Search here" button when the user moves the map (after any search,
+    // even one that found nothing — so they can always re-search a wider area).
     leafletMap.on('movestart', () => {
-      if (lastStations.length) {
+      if (currentQuery) {
         mapMoved = true;
         searchHereBtn.classList.remove('hidden');
       }
@@ -222,12 +224,13 @@ function renderMap(stations, lat, lng, fuelType, pinned, fitView = true) {
   const priciest  = stations[stations.length-1]?.price ?? 0;
   const pinnedIds = new Set(pinned);
 
-  // User dot
+  // User dot — remove the previous one first so they don't stack up across searches.
+  if (userMarker) userMarker.remove();
   const userIcon = L.divIcon({
     html: `<div style="width:14px;height:14px;background:#2563eb;border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>`,
     className: '', iconSize: [14,14], iconAnchor: [7,7],
   });
-  L.marker([lat, lng], { icon: userIcon }).addTo(leafletMap)
+  userMarker = L.marker([lat, lng], { icon: userIcon }).addTo(leafletMap)
    .bindPopup('<strong>Your location</strong>');
 
   stations.forEach(s => {
