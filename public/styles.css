@@ -151,7 +151,7 @@ body {
 .status {
   position: fixed;
   left: 50%;
-  bottom: 24px;
+  top: 16px;
   transform: translateX(-50%) translateY(0);
   z-index: 3000;
   width: max-content;
@@ -168,7 +168,7 @@ body {
 .status.error   { background: #fef2f2; color: var(--red); border: 1px solid #fecaca; }
 .status.hidden  {
   opacity: 0;
-  transform: translateX(-50%) translateY(12px);   /* slides down as it fades out */
+  transform: translateX(-50%) translateY(-12px);   /* slides up as it fades out */
 }
 
 /* ── Summary bar ── */
