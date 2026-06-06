@@ -301,6 +301,12 @@ function renderMap(stations, lat, lng, fuelType, pinned) {
           <div style="color:#6b7280;font-size:12px;margin-bottom:5px">${s.address || s.postcode || ''}</div>
           <div style="font-size:20px;font-weight:700;color:${popupColor}">${s.price.toFixed(1)}p/L</div>
           <div style="font-size:11px;color:#9ca3af">£${fillCost(s.price)} / ${FILL_LITRES}L · ${s.distanceMiles.toFixed(1)} mi</div>
+          <a href="https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}&travelmode=driving"
+             target="_blank" rel="noopener"
+             style="display:inline-block;margin-top:8px;padding:5px 10px;background:#1a73e8;
+                    color:white;font-size:12px;font-weight:600;border-radius:6px;text-decoration:none">
+            ➤ Directions
+          </a>
         </div>`);
     marker._nodeId    = s.node_id;
     marker._price     = s.price;
