@@ -187,6 +187,18 @@ body {
 }
 .summary-bar.hidden { display: none; }
 
+/* Empty state: hide the comparison columns and show a centred message instead. */
+.summary-msg {
+  display: none;
+  text-align: center;
+  font-size: 13px; font-weight: 500;
+  color: var(--text-dim);
+}
+.summary-bar.empty { display: block; }
+.summary-bar.empty > .summary-item,
+.summary-bar.empty > .summary-divider { display: none; }
+.summary-bar.empty > .summary-msg { display: block; }
+
 .summary-divider {
   width: 1px; background: var(--border);
   align-self: stretch; margin: 0 12px;

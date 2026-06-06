@@ -93,7 +93,10 @@ async function postcodeToLatLng(postcode) {
 }
 
 // ── Filter & sort ─────────────────────────────────────────────────
-function filterStations(stations, lat, lng, radiusMiles, fuelType) {
+// When `bounds` is given (a "Search here"), keep every station inside the visible map
+// rectangle. Otherwise keep stations within `radiusMiles` of (lat,lng). Distance is still
+// computed from the centre for the per-station "X mi" label either way.
+function filterStations(stations, lat, lng, radiusMiles, fuelType, bounds = null) {
   return stations
     .filter(s => s.latitude != null && s.longitude != null)
     .map(s => ({
@@ -101,7 +104,14 @@ function filterStations(stations, lat, lng, radiusMiles, fuelType) {
       distanceMiles: metresToMiles(distanceMetres(lat, lng, s.latitude, s.longitude)),
       price: (s.fuel_prices || []).find(fp => fp.fuel_type === fuelType)?.price ?? null,
     }))
-    .filter(s => s.distanceMiles <= radiusMiles && s.price !== null)
+    .filter(s => {
+      if (s.price === null) return false;
+      if (bounds) {
+        return s.latitude  >= bounds.south && s.latitude  <= bounds.north
+            && s.longitude >= bounds.west  && s.longitude <= bounds.east;
+      }
+      return s.distanceMiles <= radiusMiles;
+    })
     .sort((a, b) => a.price - b.price);
 }
 
@@ -130,8 +140,21 @@ function ageText(min) {
 }
 
 // ── Summary bar ───────────────────────────────────────────────────
+// Stays visible at all times after the first search. With fewer than 2 stations there is
+// nothing to compare, so it shows a message instead of the cheapest/priciest/saving columns.
 function renderSummary(stations) {
-  if (stations.length < 2) { summaryBar.classList.add('hidden'); return; }
+  summaryBar.classList.remove('hidden');
+  const msgEl = document.getElementById('summary-msg');
+
+  if (stations.length < 2) {
+    summaryBar.classList.add('empty');
+    msgEl.textContent = stations.length === 0
+      ? 'No stations within the search area.'
+      : 'Only one station within the search area.';
+    return;
+  }
+  summaryBar.classList.remove('empty');
+
   const cheap  = stations[0];
   const expens = stations[stations.length - 1];
   const saving = (expens.price - cheap.price) / 100 * FILL_LITRES;
@@ -148,8 +171,6 @@ function renderSummary(stations) {
   document.getElementById('sum-exp-fill').textContent    = `£${fillCost(expens.price)}`;
 
   document.getElementById('sum-saving').textContent      = `£${saving.toFixed(2)}`;
-
-  summaryBar.classList.remove('hidden');
 }
 
 // ── Map ───────────────────────────────────────────────────────────
@@ -284,7 +305,10 @@ function renderResults(stations, fuelType, elapsed, note) {
   resultsMetaEl.textContent = metaBits.join(' · ');
 
   if (stations.length === 0) {
-    stationListEl.innerHTML = '<p class="no-results">No stations found. Try a wider radius.</p>';
+    const hint = currentQuery?.bounds
+      ? 'No stations in the visible map area. Zoom out and tap “Search here” again.'
+      : 'No stations found. Try a wider radius.';
+    stationListEl.innerHTML = `<p class="no-results">${hint}</p>`;
     resultsEl.classList.remove('hidden');
     return;
   }
@@ -379,10 +403,10 @@ function togglePin(nodeId) {
 
 // ── Main search ───────────────────────────────────────────────────
 async function doSearch(lat, lng, postcode, saveAsFav = true, overrideRadius = null,
-                                                                          keepView = false) {
+                                                          keepView = false, bounds = null) {
   const radiusMiles = overrideRadius !== null ? overrideRadius : parseFloat(radiusSelect.value);
   const fuelType    = fuelSelect.value;
-  currentQuery = { lat, lng, radiusMiles, fuelType, postcode, saveAsFav, keepView };
+  currentQuery = { lat, lng, radiusMiles, fuelType, postcode, saveAsFav, keepView, bounds };
 
   lastLat = lat; lastLng = lng;
   mapMoved = false;
@@ -430,7 +454,8 @@ function renderQuery(note, elapsed) {
     'E10': 'Petrol (E10)', 'E5': 'Petrol (E5)',
     'B7_STANDARD': 'Diesel', 'B7_PREMIUM': 'Diesel Premium',
   };
-  const nearby = filterStations(datasetStations, lat, lng, radiusMiles, fuelType);
+  const nearby = filterStations(datasetStations, lat, lng, radiusMiles, fuelType,
+                                                                          currentQuery.bounds);
   lastStations = nearby;
   renderSummary(nearby);
   renderMap(nearby, lat, lng, fuelType, loadPinned(), !currentQuery.keepView);
@@ -516,13 +541,14 @@ function saveFavSettings(postcode, lat, lng, fuelType, fuelLabels, radius) {
 if (searchHereBtn) {
   searchHereBtn.addEventListener('click', () => {
     const centre = leafletMap.getCenter();
-    const bounds = leafletMap.getBounds();
-    const northMid = L.latLng(bounds.getNorth(), centre.lng);
-    const radiusM  = leafletMap.distance(centre, northMid);
-    const radiusMi = radiusM / 1609.344;
+    const b      = leafletMap.getBounds();
+    const bounds = {
+      south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast(),
+    };
     searchHereBtn.classList.add('hidden');
     mapMoved = false;
-    doSearch(centre.lat, centre.lng, null, false, radiusMi, true);   // keep the current map view
+    // keepView = true, and filter by the whole visible rectangle (not a centre radius).
+    doSearch(centre.lat, centre.lng, null, false, null, true, bounds);
   });
 }
 
