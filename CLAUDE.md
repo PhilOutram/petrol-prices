@@ -99,3 +99,10 @@ distance via haversine, and up-to-3 pinned favourites + a saved-search favourite
 - `index.html` + `index.js` — the main app.
 - `check.html` + `check.js` — API diagnostic/inspection page.
 - `public/app.js` is an **orphaned** older diagnostic script — not referenced by any HTML.
+
+### PWA (installable web app)
+`manifest.webmanifest`, `sw.js`, and `icon-*.png` (32/180/192/512) make the app installable on
+phones. The icons are the ⛽ glyph (U+26FD) drawn white on the `#2563eb` accent — regenerate
+them with the `System.Drawing` PowerShell snippet (white Segoe UI Emoji glyph centred at ~0.46×
+the canvas). `sw.js` is deliberately **network-first** for same-origin assets (so deployed code
+is never stale) and ignores `/api/*` and cross-origin tiles; bump `CACHE` if its logic changes.
