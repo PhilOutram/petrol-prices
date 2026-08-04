@@ -1,13 +1,21 @@
 // ================================================================
 // FuelScan — Main App
 // ================================================================
-const APP_VERSION    = 'v1.1.5';   // shown in the header; keep sw.js CACHE name in sync
+const APP_VERSION    = 'v1.1.6';   // shown in the header; keep sw.js CACHE name in sync
 const FAV_KEY        = 'fuelscan_favourite';
 const PINNED_KEY     = 'fuelscan_pinned';
 const FILL_LITRES    = 60;
 const EARTH_RADIUS_M = 6371000;
 const STATUS_HIDE_MS = 3000;   // ms after which status bar auto-hides
 const USER_MARKER_Z  = 1000;   // z-offset so the location dot sits above all station pins
+
+// Map marker edge colours/widths - favourite = gold, selected = blue, default = white.
+const SEL_BORDER_COLOR = '#2563eb';   // selected pin edge (matches the accent blue)
+const FAV_BORDER_COLOR = '#eab308';   // favourited station edge (gold)
+const PIN_BORDER_COLOR = 'white';     // default station edge
+const SEL_BORDER_W     = 4;           // selected pin edge width (px)
+const FAV_BORDER_W     = 3;           // favourite edge width (px)
+const PIN_BORDER_W     = 2;           // default edge width (px)
 
 // ── DOM ──────────────────────────────────────────────────────────
 const postcodeInput   = document.getElementById('postcode-input');
@@ -236,8 +244,8 @@ function priceColor(price, cheapest) {
 
 function makeMarkerIcon(price, cheapest, priciest, isPinned, isHighlighted) {
   const color  = priceColor(price, cheapest);
-  const border = isHighlighted ? '#facc15' : isPinned ? '#2563eb' : 'white';
-  const bw     = isHighlighted ? 4 : isPinned ? 3 : 2;
+  const border = isHighlighted ? SEL_BORDER_COLOR : isPinned ? FAV_BORDER_COLOR : PIN_BORDER_COLOR;
+  const bw     = isHighlighted ? SEL_BORDER_W : isPinned ? FAV_BORDER_W : PIN_BORDER_W;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="52" height="46" viewBox="0 0 52 46">
     <ellipse cx="26" cy="43" rx="9" ry="3.5" fill="rgba(0,0,0,0.15)"/>
     <path d="M26 3 C14 3 6 11 6 21 C6 33 26 43 26 43 C26 43 46 33 46 21 C46 11 38 3 26 3Z"

@@ -2,7 +2,7 @@
 // Strategy: network-first for our own pages/assets so deployed code is never stale, with a
 // cached copy as an offline fallback. API calls and cross-origin requests (map tiles,
 // postcodes.io) are left to the network entirely.
-const CACHE = 'fuelscan-v1.1.5';   // keep in sync with APP_VERSION in index.js
+const CACHE = 'fuelscan-v1.1.6';   // keep in sync with APP_VERSION in index.js
 
 self.addEventListener('install', e => {
   self.skipWaiting();

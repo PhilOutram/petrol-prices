@@ -16,6 +16,8 @@
   --accent-bd: #bfdbfe;
   --green:     #059669;
   --amber:     #d97706;
+  --gold:      #eab308;
+  --gold-lt:   #fefce8;
   --red:       #dc2626;
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
   --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
@@ -293,14 +295,14 @@ body {
 }
 .station-card:hover { box-shadow: var(--shadow-md); }
 .station-card.pinned {
-  border-color: var(--accent);
-  background: linear-gradient(135deg, #eff6ff 0%, var(--surface) 100%);
+  border-color: var(--gold);
+  background: linear-gradient(135deg, var(--gold-lt) 0%, var(--surface) 100%);
 }
 .station-card.highlighted {
-  border-color: #facc15;
+  border-color: var(--accent);
   border-width: 2.5px;
-  box-shadow: 0 0 0 3px rgba(250,204,21,0.3), var(--shadow-md);
-  background: linear-gradient(135deg, #fefce8 0%, var(--surface) 100%);
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.3), var(--shadow-md);
+  background: linear-gradient(135deg, var(--accent-lt) 0%, var(--surface) 100%);
 }
 .station-card { cursor: pointer; }
 .station-rank { font-size: 18px; width: 26px; text-align: center; flex-shrink: 0; }
@@ -326,8 +328,8 @@ body {
   padding: 2px 0; line-height: 1;
   transition: color 0.15s, transform 0.1s;
 }
-.pin-btn:hover { color: var(--amber); transform: scale(1.2); }
-.pin-btn.pinned { color: var(--amber); }
+.pin-btn:hover { color: var(--gold); transform: scale(1.2); }
+.pin-btn.pinned { color: var(--gold); }
 .no-results { color: var(--text-dim); font-size: 13px; padding: 16px 0; }
 
 /* ── Check page ── */
