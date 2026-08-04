@@ -107,18 +107,18 @@ body {
 }
 .search-options {
   display: flex;
-  gap: 14px;
+  gap: 8px;
   align-items: center;
   flex-wrap: wrap;
 }
 .search-options label {
   font-size: 12px; font-weight: 500; color: var(--text-dim);
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: 4px;
 }
 .search-options select {
-  padding: 5px 8px;
+  padding: 5px 6px;
   border: 1px solid var(--border2); border-radius: 6px;
-  font-family: 'DM Sans', sans-serif; font-size: 13px;
+  font-family: 'DM Sans', sans-serif; font-size: 12px;
   background: var(--surface); color: var(--text);
   outline: none; cursor: pointer;
 }
