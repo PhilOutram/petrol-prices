@@ -49,6 +49,11 @@ body {
 .logo { font-size: 22px; }
 .logo-text { font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
 .header-right { display: flex; align-items: center; gap: 8px; }
+.app-version {
+  font-size: 11px; color: var(--text-faint);
+  font-family: 'DM Mono', monospace; letter-spacing: -0.02em;
+  user-select: none;
+}
 
 .check-link, .btn-icon-sm {
   font-size: 14px; color: var(--text-dim);

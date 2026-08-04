@@ -1,6 +1,7 @@
 // ================================================================
 // FuelScan — Main App
 // ================================================================
+const APP_VERSION    = 'v1.1.0';   // shown in the header; keep sw.js CACHE name in sync
 const FAV_KEY        = 'fuelscan_favourite';
 const PINNED_KEY     = 'fuelscan_pinned';
 const FILL_LITRES    = 60;
@@ -631,6 +632,7 @@ resetProfileBtn.addEventListener('click', async () => {
 });
 
 // ── Init ──────────────────────────────────────────────────────────
+document.getElementById('app-version').textContent = APP_VERSION;
 updateFavBtn();
 
 // Register the service worker so the app can be installed as a PWA.
