@@ -1,13 +1,14 @@
 // ================================================================
 // FuelScan — Main App
 // ================================================================
-const APP_VERSION    = 'v1.1.6';   // shown in the header; keep sw.js CACHE name in sync
+const APP_VERSION    = 'v1.1.7';   // shown in the header; keep sw.js CACHE name in sync
 const FAV_KEY        = 'fuelscan_favourite';
 const PINNED_KEY     = 'fuelscan_pinned';
 const FILL_LITRES    = 60;
 const EARTH_RADIUS_M = 6371000;
 const STATUS_HIDE_MS = 3000;   // ms after which status bar auto-hides
-const USER_MARKER_Z  = 1000;   // z-offset so the location dot sits above all station pins
+const USER_MARKER_Z  = 100000; // z-offset: location dot sits above every pin (incl. selected)
+const SEL_MARKER_Z   = 2000;   // z-offset: selected pin rises above other pins, below the dot
 
 // Map marker edge colours/widths - favourite = gold, selected = blue, default = white.
 const SEL_BORDER_COLOR = '#2563eb';   // selected pin edge (matches the accent blue)
@@ -38,6 +39,7 @@ const stationListEl   = document.getElementById('station-list');
 let leafletMap      = null;
 let mapMarkers      = [];
 let userMarker      = null;    // the "your location" dot — tracked so it can be replaced
+let selectedNode    = null;    // node_id of the selected station (kept in sync: list/pin/summary)
 let lastStations    = [];      // filtered list currently shown (used by pin re-render)
 let lastLat         = null;
 let lastLng         = null;
@@ -193,7 +195,7 @@ function wireSummaryJump(className, nodeId) {
   if (!tile) return;
   tile.classList.add('clickable');
   tile.onclick = () => {
-    highlightStation(nodeId);
+    selectStation(nodeId, { fromMap: false });
     mapWrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   };
 }
@@ -308,6 +310,8 @@ function renderMap(stations, lat, lng, fuelType, pinned, fitView = true) {
     marker._cheapest  = cheapest;
     marker._priciest  = priciest;
     marker._isPinned  = isPinned;
+    // Click a pin → same as clicking its row, minus the map/list movement (fromMap).
+    marker.on('click', () => selectStation(s.node_id, { fromMap: true }));
     mapMarkers.push(marker);
   });
 
@@ -325,6 +329,7 @@ function renderResults(stations, fuelType, elapsed, note) {
     'B7_STANDARD': 'Diesel', 'B7_PREMIUM': 'Diesel Premium',
   };
   const pinned = loadPinned();
+  selectedNode = null;   // the list is being rebuilt — clear any prior selection
 
   resultsTitleEl.textContent = `${stations.length} station${stations.length !== 1 ? 's' : ''} nearby`;
   const metaBits = [fuelLabels[fuelType] || fuelType];
@@ -374,36 +379,38 @@ function renderResults(stations, fuelType, elapsed, note) {
     btn.addEventListener('click', e => { e.stopPropagation(); togglePin(btn.dataset.node); });
   });
 
-  // Click card → highlight card + map marker
-  let highlightedNode = null;
+  // Click card → select it (highlights card + pin, centres the map on the pin). Clicking
+  // the already-selected row toggles the selection off.
   stationListEl.querySelectorAll('.station-card').forEach(card => {
     card.addEventListener('click', () => {
       const nodeId = card.dataset.node;
-      highlightStation(nodeId === highlightedNode ? null : nodeId);
-      highlightedNode = nodeId === highlightedNode ? null : nodeId;
+      selectStation(nodeId === selectedNode ? null : nodeId, { fromMap: false });
     });
   });
 }
 
-function highlightStation(nodeId) {
-  // Cards
+// Select a station from the list, a summary tile, or a map pin. The selected row and its
+// pin both take the blue "selected" styling, and the pin rises above the other pins (but
+// stays below the location dot). fromMap = true means the click came from the pin itself,
+// so we leave the map where it is and don't scroll the list — we just mirror the highlight,
+// keeping the connection clear for when the user scrolls down to that row.
+function selectStation(nodeId, { fromMap = false } = {}) {
+  selectedNode = nodeId;
+
+  // Cards — blue highlight on the selected row (never scrolled into view).
   stationListEl.querySelectorAll('.station-card').forEach(card => {
-    if (nodeId && card.dataset.node === nodeId) {
-      card.classList.add('highlighted');
-    } else {
-      card.classList.remove('highlighted');
-    }
+    card.classList.toggle('highlighted', !!nodeId && card.dataset.node === nodeId);
   });
 
-  // Map markers
+  // Map markers — blue border + raised z-order on the selected pin, reset on the rest.
   mapMarkers.forEach(marker => {
-    const isThis     = marker._nodeId === nodeId;
-    const isPinned   = marker._isPinned;
+    const isThis = marker._nodeId === nodeId;
     const icon = makeMarkerIcon(
-      marker._price, marker._cheapest, marker._priciest, isPinned, isThis
+      marker._price, marker._cheapest, marker._priciest, marker._isPinned, isThis
     );
     marker.setIcon(icon);
-    if (isThis) {
+    marker.setZIndexOffset(isThis ? SEL_MARKER_Z : 0);
+    if (isThis && !fromMap) {          // list/summary click — bring the pin into view
       marker.openPopup();
       leafletMap.panTo(marker.getLatLng(), { animate: true });
     }
