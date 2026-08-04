@@ -204,6 +204,8 @@ body {
   align-self: stretch; margin: 0 12px;
 }
 .summary-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.summary-item.clickable { cursor: pointer; border-radius: 6px; transition: opacity 0.15s; }
+.summary-item.clickable:hover { opacity: 0.7; }
 .summary-label {
   font-size: 9px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-faint);

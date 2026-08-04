@@ -6,6 +6,7 @@ const PINNED_KEY     = 'fuelscan_pinned';
 const FILL_LITRES    = 60;
 const EARTH_RADIUS_M = 6371000;
 const STATUS_HIDE_MS = 3000;   // ms after which status bar auto-hides
+const USER_MARKER_Z  = 1000;   // z-offset so the location dot sits above all station pins
 
 // ── DOM ──────────────────────────────────────────────────────────
 const postcodeInput   = document.getElementById('postcode-input');
@@ -171,6 +172,21 @@ function renderSummary(stations) {
   document.getElementById('sum-exp-fill').textContent    = `£${fillCost(expens.price)}`;
 
   document.getElementById('sum-saving').textContent      = `£${saving.toFixed(2)}`;
+
+  // Make the Cheapest / Priciest tiles jump to their pin on the map, same as a list card.
+  wireSummaryJump('summary-best',  cheap.node_id);
+  wireSummaryJump('summary-worst', expens.node_id);
+}
+
+// Attach a click on a summary tile that pans the map to the given station's pin.
+function wireSummaryJump(className, nodeId) {
+  const tile = summaryBar.querySelector('.' + className);
+  if (!tile) return;
+  tile.classList.add('clickable');
+  tile.onclick = () => {
+    highlightStation(nodeId);
+    mapWrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
 }
 
 // ── Map ───────────────────────────────────────────────────────────
@@ -251,8 +267,11 @@ function renderMap(stations, lat, lng, fuelType, pinned, fitView = true) {
     html: `<div style="width:14px;height:14px;background:#2563eb;border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>`,
     className: '', iconSize: [14,14], iconAnchor: [7,7],
   });
-  userMarker = L.marker([lat, lng], { icon: userIcon }).addTo(leafletMap)
-   .bindPopup('<strong>Your location</strong>');
+  // zIndexOffset keeps the location dot above every station pin — Leaflet otherwise
+  // z-orders markers by latitude, which lets pins south of you bury the dot.
+  userMarker = L.marker([lat, lng], { icon: userIcon, zIndexOffset: USER_MARKER_Z })
+    .addTo(leafletMap)
+    .bindPopup('<strong>Your location</strong>');
 
   stations.forEach(s => {
     const isPinned = pinnedIds.has(s.node_id);
