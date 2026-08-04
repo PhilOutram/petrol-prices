@@ -1,7 +1,7 @@
 // ================================================================
 // FuelScan — Main App
 // ================================================================
-const APP_VERSION    = 'v1.1.4';   // shown in the header; keep sw.js CACHE name in sync
+const APP_VERSION    = 'v1.1.5';   // shown in the header; keep sw.js CACHE name in sync
 const FAV_KEY        = 'fuelscan_favourite';
 const PINNED_KEY     = 'fuelscan_pinned';
 const FILL_LITRES    = 60;
