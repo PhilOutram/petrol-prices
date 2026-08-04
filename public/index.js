@@ -1,7 +1,7 @@
 // ================================================================
 // FuelScan — Main App
 // ================================================================
-const APP_VERSION    = 'v1.1.1';   // shown in the header; keep sw.js CACHE name in sync
+const APP_VERSION    = 'v1.1.3';   // shown in the header; keep sw.js CACHE name in sync
 const FAV_KEY        = 'fuelscan_favourite';
 const PINNED_KEY     = 'fuelscan_pinned';
 const FILL_LITRES    = 60;
@@ -313,7 +313,7 @@ function renderMap(stations, lat, lng, fuelType, pinned, fitView = true) {
 // ── Station cards ─────────────────────────────────────────────────
 function renderResults(stations, fuelType, elapsed, note) {
   const fuelLabels = {
-    'E10': 'Unleaded (E10 · standard)', 'E5': 'Super unleaded (E5 · premium)',
+    'E10': 'Unleaded (E10)', 'E5': 'Super (E5)',
     'B7_STANDARD': 'Diesel', 'B7_PREMIUM': 'Diesel Premium',
   };
   const pinned = loadPinned();
@@ -471,7 +471,7 @@ function renderQuery(note, elapsed) {
   if (!currentQuery) return;
   const { lat, lng, radiusMiles, fuelType, postcode, saveAsFav } = currentQuery;
   const fuelLabels = {
-    'E10': 'Unleaded (E10 · standard)', 'E5': 'Super unleaded (E5 · premium)',
+    'E10': 'Unleaded (E10)', 'E5': 'Super (E5)',
     'B7_STANDARD': 'Diesel', 'B7_PREMIUM': 'Diesel Premium',
   };
   const nearby = filterStations(datasetStations, lat, lng, radiusMiles, fuelType,
