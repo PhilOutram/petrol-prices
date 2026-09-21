@@ -1,7 +1,7 @@
 // ================================================================
 // FuelScan — Main App
 // ================================================================
-const APP_VERSION    = 'v1.1.7';   // shown in the header; keep sw.js CACHE name in sync
+const APP_VERSION    = 'v1.1.8';   // shown in the header; keep sw.js CACHE name in sync
 const FAV_KEY        = 'fuelscan_favourite';
 const PINNED_KEY     = 'fuelscan_pinned';
 const FILL_LITRES    = 60;
@@ -17,6 +17,15 @@ const PIN_BORDER_COLOR = 'white';     // default station edge
 const SEL_BORDER_W     = 4;           // selected pin edge width (px)
 const FAV_BORDER_W     = 3;           // favourite edge width (px)
 const PIN_BORDER_W     = 2;           // default edge width (px)
+
+// Basemap - Esri World Light Gray Canvas (free, no API key). Esri only has real tiles up to
+// zoom 16 (deeper requests get a "Map data not yet available" image), so Leaflet upscales.
+const ESRI_CANVAS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/';
+const TILE_BASE_URL   = ESRI_CANVAS_URL + 'World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}';
+const TILE_LABELS_URL = ESRI_CANVAS_URL + 'World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}';
+const TILE_NATIVE_MAX = 16;   // deepest zoom Esri actually serves
+const MAP_MAX_ZOOM    = 17;   // one level of upscaled overzoom for picking out a forecourt
+const MAP_ATTRIBUTION = 'Tiles © Esri, HERE, Garmin, © OpenStreetMap contributors';
 
 // ── DOM ──────────────────────────────────────────────────────────
 const postcodeInput   = document.getElementById('postcode-input');
@@ -204,10 +213,10 @@ function wireSummaryJump(className, nodeId) {
 function initMap(lat, lng) {
   if (!leafletMap) {
     leafletMap = L.map('map').setView([lat, lng], 12);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      attribution: '© OpenStreetMap © CARTO',
-      maxZoom: 19,
-    }).addTo(leafletMap);
+    // Grey base plus a separate transparent place-name layer (the base has almost no labels).
+    const tileOpts = { maxNativeZoom: TILE_NATIVE_MAX, maxZoom: MAP_MAX_ZOOM };
+    L.tileLayer(TILE_BASE_URL, { ...tileOpts, attribution: MAP_ATTRIBUTION }).addTo(leafletMap);
+    L.tileLayer(TILE_LABELS_URL, tileOpts).addTo(leafletMap);
 
     // Show "Search here" button when the user moves the map (after any search,
     // even one that found nothing — so they can always re-search a wider area).
