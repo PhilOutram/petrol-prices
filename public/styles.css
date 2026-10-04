@@ -102,6 +102,14 @@ body {
   letter-spacing: 0.05em;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
+/* The placeholder is a full sentence, so it drops the input's uppercase styling and
+   shrinks to fit a phone-width box. Typed postcodes are still uppercased. */
+.search-row input::placeholder {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12.5px;
+}
+
 .search-row input:focus {
   border-color: var(--accent);
   background: var(--surface);

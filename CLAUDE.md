@@ -71,7 +71,14 @@ to stay under Upstash's free-tier ~1 MB request limit; `fuel:meta` (written last
 point. Per-price timestamps are dropped in `mergeStations` since the UI never reads them.
 
 ### Client data flow (`public/index.js`)
-On each search the browser calls `/api/fuel` and filters the returned dataset locally
+**The dataset is loaded at page load, not at search time** (`prefetchPrices`, v1.1.9). Every
+search needs the whole UK list wherever it is centred, so the app fetches it while the user is
+still choosing a location, reporting progress in the status bar as background work. A search then
+renders straight from memory when `datasetReady()` (loaded, `fresh`, and less than
+`DATASET_REUSE_MS` old); otherwise it falls back to the read-and-render path below. All dataset
+assignments go through `setDataset` so its age is tracked.
+
+On a cache miss the browser calls `/api/fuel` and filters the returned dataset locally
 (`filterStations` → `renderQuery`). Behaviour by cache status:
 - **fresh** → render immediately.
 - **stale** → render the old data at once with an age banner ("from 23 min ago"), then
@@ -89,6 +96,13 @@ Does a direct full all-batches fetch and returns diagnostics (per-batch counts, 
 first 10 stations). Backs `check.html` only. Self-contained — it still has its own copies of
 `httpsRequest`/`getToken`/`fetchBatch` and does **not** use `lib/`, so it works as a
 cache-independent way to probe the upstream API.
+
+The map shades everything **outside** the searched area (`drawSearchArea`: one world-sized polygon
+with the search circle, or the "Search here" rectangle, punched out of it with `fill-rule:evenodd`),
+and fits the view to that area rather than to the pins - otherwise its edge is off screen and a gap
+in the pins is ambiguous between "no stations" and "just outside the search". The location dot is
+blue only for a live GPS fix (`doSearch` opt `isLive`); a postcode, favourite or map centre gets a
+grey dot.
 
 Other client concerns in `index.js`: postcode→lat/lng via `api.postcodes.io`, Leaflet map with
 price-coloured SVG markers (`priceColor` lerps green→orange→red by pence above cheapest),

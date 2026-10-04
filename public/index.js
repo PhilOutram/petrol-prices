@@ -1,7 +1,7 @@
 // ================================================================
 // FuelScan — Main App
 // ================================================================
-const APP_VERSION    = 'v1.1.8';   // shown in the header; keep sw.js CACHE name in sync
+const APP_VERSION    = 'v1.1.9';   // shown in the header; keep sw.js CACHE name in sync
 const FAV_KEY        = 'fuelscan_favourite';
 const PINNED_KEY     = 'fuelscan_pinned';
 const FILL_LITRES    = 60;
@@ -26,6 +26,26 @@ const TILE_LABELS_URL = ESRI_CANVAS_URL + 'World_Light_Gray_Reference/MapServer/
 const TILE_NATIVE_MAX = 16;   // deepest zoom Esri actually serves
 const MAP_MAX_ZOOM    = 17;   // one level of upscaled overzoom for picking out a forecourt
 const MAP_ATTRIBUTION = 'Tiles © Esri, HERE, Garmin, © OpenStreetMap contributors';
+
+// The "you are here" dot: blue only for a live GPS fix, grey for a spot the user chose
+// (postcode, favourite or map centre), so the dot never implies a location we don't have.
+const LIVE_DOT_COLOR   = '#2563eb';
+const PICKED_DOT_COLOR = '#6b7280';
+
+// Everything outside the searched area is dimmed, so a gap in the pins reads as "no stations
+// here" rather than "just outside the search".
+const MASK_FILL_COLOR   = '#1f2937';
+const MASK_FILL_OPACITY = 0.18;
+const MASK_EDGE_COLOR   = '#374151';
+const MASK_EDGE_WIDTH   = 1.5;
+const MASK_EDGE_OPACITY = 0.5;
+const MASK_RING_POINTS  = 128;   // segments approximating the radius circle
+const MASK_FIT_PADDING  = 12;    // px of slack when fitting the map to the searched area
+const MAP_SETTLE_MS     = 100;   // wait for the layout to settle, then re-measure and re-fit
+const WORLD_RING        = [[-85, -180], [-85, 180], [85, 180], [85, -180]];
+
+const METRES_PER_MILE  = 1609.344;
+const DATASET_REUSE_MS = 5 * 60 * 1000;   // how long a loaded dataset is reused without re-reading
 
 // ── DOM ──────────────────────────────────────────────────────────
 const postcodeInput   = document.getElementById('postcode-input');
@@ -55,8 +75,13 @@ let lastLng         = null;
 let statusHideTimer = null;
 let mapMoved        = false;   // tracks whether user has panned/zoomed
 let datasetStations = [];      // full UK station list from the shared cache
-let currentQuery    = null;    // { lat, lng, radiusMiles, fuelType, postcode, saveAsFav }
+let datasetStatus   = null;    // 'fresh' | 'stale' - how the cache described that list
+let datasetTotal    = 0;       // station count reported with it
+let datasetAt       = 0;       // when we loaded it, so a search can reuse it without re-reading
+let prefetchPromise = null;    // the startup load, so a search waits rather than re-fetching
+let currentQuery    = null;    // { lat, lng, radiusMiles, fuelType, postcode, saveAsFav, isLive }
 let refreshing      = false;   // true while a background/foreground refresh is in flight
+let searchAreaLayer = null;    // the shading outside the searched area
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -82,7 +107,7 @@ function distanceMetres(lat1, lng1, lat2, lng2) {
             Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2)**2;
   return EARTH_RADIUS_M * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
-function metresToMiles(m) { return m / 1609.344; }
+function metresToMiles(m) { return m / METRES_PER_MILE; }
 function fillCost(pricePence) { return ((pricePence / 100) * FILL_LITRES).toFixed(2); }
 
 // ── Storage ───────────────────────────────────────────────────────
@@ -151,6 +176,44 @@ async function runRefresh() {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Refresh failed');
   return data;
+}
+
+// A search needs the whole UK dataset wherever it is centred, so the list is loaded once and
+// reused. setDataset records when, so a later search knows whether it is still worth reusing.
+function setDataset(stations, status, total) {
+  datasetStations = stations;
+  datasetStatus   = status;
+  datasetTotal    = total ?? stations.length;
+  datasetAt       = Date.now();
+}
+
+function datasetReady() {
+  return datasetStations.length > 0 && datasetStatus === 'fresh'
+      && Date.now() - datasetAt < DATASET_REUSE_MS;
+}
+
+// Load the prices while the user is still deciding where to search, so the first search is
+// instant. Quiet by design: it says what it is doing in the status bar and swallows errors,
+// because the search path reports anything the user is actually waiting on.
+async function prefetchPrices() {
+  try {
+    showStatus('🔄 Loading prices in the background…');
+    const cache = await getCache();
+    if (cache.status === 'empty') {       // nothing cached at all - build it now, not at search
+      showStatus('🔄 Fetching the latest UK fuel prices in the background (~20s)…');
+      await backgroundRefresh();
+      return;
+    }
+    setDataset(cache.stations, cache.status, cache.total_stations);
+    if (cache.status === 'stale') {
+      showStatus(`🔄 Updating prices from ${ageText(cache.ageMinutes)} in the background…`);
+      await backgroundRefresh();
+    } else {
+      showStatus(`✓ Prices ready · ${datasetTotal.toLocaleString()} stations`, 'loading', true);
+    }
+  } catch {
+    hideStatus();   // nothing to report yet; the first search will try again and say so
+  }
 }
 
 function ageText(min) {
@@ -271,6 +334,35 @@ function makeMarkerIcon(price, cheapest, priciest, isPinned, isHighlighted) {
   });
 }
 
+// Ring of points approximating a circle of `radiusMiles` around (lat,lng). Flat-earth maths
+// is plenty at these distances (the largest radius offered is 20 miles).
+function circleRing(lat, lng, radiusMiles) {
+  const latSpan = (radiusMiles * METRES_PER_MILE) / EARTH_RADIUS_M * (180 / Math.PI);
+  const lngSpan = latSpan / Math.cos(lat * Math.PI / 180);
+  const ring = [];
+  for (let i = 0; i < MASK_RING_POINTS; i++) {
+    const angle = (i / MASK_RING_POINTS) * 2 * Math.PI;
+    ring.push([lat + latSpan * Math.cos(angle), lng + lngSpan * Math.sin(angle)]);
+  }
+  return ring;
+}
+
+// Dim everything outside the searched area: one polygon covering the world with the searched
+// area punched out of it (evenodd fill). Returns the searched ring so the caller can fit to it.
+function drawSearchArea(lat, lng, radiusMiles, bounds) {
+  if (searchAreaLayer) searchAreaLayer.remove();
+  const ring = bounds
+    ? [[bounds.south, bounds.west], [bounds.south, bounds.east],
+       [bounds.north, bounds.east], [bounds.north, bounds.west]]
+    : circleRing(lat, lng, radiusMiles);
+  searchAreaLayer = L.polygon([WORLD_RING, ring], {
+    color: MASK_EDGE_COLOR, weight: MASK_EDGE_WIDTH, opacity: MASK_EDGE_OPACITY,
+    fillColor: MASK_FILL_COLOR, fillOpacity: MASK_FILL_OPACITY, fillRule: 'evenodd',
+    interactive: false,   // clicks still reach the pins and the map underneath
+  }).addTo(leafletMap);
+  return ring;
+}
+
 function renderMap(stations, lat, lng, fuelType, pinned, fitView = true) {
   mapWrap.classList.remove('hidden');
   initMap(lat, lng);
@@ -281,17 +373,23 @@ function renderMap(stations, lat, lng, fuelType, pinned, fitView = true) {
   const priciest  = stations[stations.length-1]?.price ?? 0;
   const pinnedIds = new Set(pinned);
 
+  // Shading outside the searched area, drawn before the pins so it sits under them.
+  const ring = drawSearchArea(lat, lng, currentQuery?.radiusMiles, currentQuery?.bounds);
+
   // User dot — remove the previous one first so they don't stack up across searches.
   if (userMarker) userMarker.remove();
+  const isLive   = !!currentQuery?.isLive;
+  const dotColor = isLive ? LIVE_DOT_COLOR : PICKED_DOT_COLOR;
   const userIcon = L.divIcon({
-    html: `<div style="width:14px;height:14px;background:#2563eb;border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>`,
+    html: `<div style="width:14px;height:14px;background:${dotColor};border:3px solid white;
+                       border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>`,
     className: '', iconSize: [14,14], iconAnchor: [7,7],
   });
   // zIndexOffset keeps the location dot above every station pin — Leaflet otherwise
   // z-orders markers by latitude, which lets pins south of you bury the dot.
   userMarker = L.marker([lat, lng], { icon: userIcon, zIndexOffset: USER_MARKER_Z })
     .addTo(leafletMap)
-    .bindPopup('<strong>Your location</strong>');
+    .bindPopup(isLive ? '<strong>Your location</strong>' : '<strong>Search location</strong>');
 
   stations.forEach(s => {
     const isPinned = pinnedIds.has(s.node_id);
@@ -324,11 +422,24 @@ function renderMap(stations, lat, lng, fuelType, pinned, fitView = true) {
     mapMarkers.push(marker);
   });
 
-  if (fitView && stations.length > 0) {
-    const bounds = L.latLngBounds([[lat, lng], ...stations.map(s => [s.latitude, s.longitude])]);
-    leafletMap.fitBounds(bounds, { padding: [40, 40] });
-  }
-  setTimeout(() => leafletMap.invalidateSize(), 100);
+  // Fit to the whole searched area, not just the pins, or its edge is never on screen and the
+  // shading has nothing to tell you. The map may have only just been un-hidden or resized, so
+  // measure before fitting and again once the layout has settled.
+  // animate:false - a search jumps to its area, and an animated fit that gets re-fitted
+  // mid-flight leaves the previous zoom level's tiles stacked on the map.
+  const fitToSearchArea = () => leafletMap.fitBounds(L.latLngBounds(ring),
+                                     { padding: [MASK_FIT_PADDING, MASK_FIT_PADDING],
+                                       animate: false });
+  leafletMap.invalidateSize();
+  if (fitView) fitToSearchArea();
+  setTimeout(() => {
+    leafletMap.invalidateSize();
+    if (!fitView) return;
+    // A map measured at zero width (rendered in a hidden or not-yet-laid-out tab) fits to
+    // nothing and sticks at max zoom, so wait for it to have a size before fitting.
+    if (leafletMap.getSize().x > 0) fitToSearchArea();
+    else leafletMap.once('resize', fitToSearchArea);
+  }, MAP_SETTLE_MS);
 }
 
 // ── Station cards ─────────────────────────────────────────────────
@@ -446,11 +557,15 @@ function togglePin(nodeId) {
 }
 
 // ── Main search ───────────────────────────────────────────────────
-async function doSearch(lat, lng, postcode, saveAsFav = true, overrideRadius = null,
-                                                          keepView = false, bounds = null) {
+// opts.isLive is true only for a live GPS fix. A postcode, a favourite or the map centre is a
+// place the user picked, not where they are, so the dot is drawn grey instead of blue.
+async function doSearch(lat, lng, postcode, opts = {}) {
+  const { saveAsFav = true, overrideRadius = null, keepView = false, bounds = null,
+                                                                      isLive = false } = opts;
   const radiusMiles = overrideRadius !== null ? overrideRadius : parseFloat(radiusSelect.value);
   const fuelType    = fuelSelect.value;
-  currentQuery = { lat, lng, radiusMiles, fuelType, postcode, saveAsFav, keepView, bounds };
+  currentQuery = { lat, lng, radiusMiles, fuelType, postcode, saveAsFav, keepView, bounds,
+                                                                                      isLive };
 
   lastLat = lat; lastLng = lng;
   mapMoved = false;
@@ -459,6 +574,19 @@ async function doSearch(lat, lng, postcode, saveAsFav = true, overrideRadius = n
   // so the layout never collapses and re-expands (which used to jolt the map up and down).
 
   const t0 = Date.now();
+
+  // The startup prefetch may still be in flight - wait for it rather than firing a second
+  // read of the very same dataset.
+  if (prefetchPromise) {
+    showStatus('🔍 Loading fuel prices…');
+    try { await prefetchPromise; } catch { /* fall through to a read of our own */ }
+  }
+  if (datasetReady()) {                  // already loaded and still current - no network wait
+    showStatus(`✓ ${datasetTotal.toLocaleString()} stations · prices current`, 'loading', true);
+    renderQuery('live', ((Date.now() - t0) / 1000).toFixed(2));
+    return;
+  }
+
   showStatus('🔍 Loading fuel prices…');
 
   let cache;
@@ -475,7 +603,7 @@ async function doSearch(lat, lng, postcode, saveAsFav = true, overrideRadius = n
   }
 
   // We have data (fresh or stale) — show it immediately.
-  datasetStations = cache.stations;
+  setDataset(cache.stations, cache.status, cache.total_stations);
   const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
 
   if (cache.status === 'fresh') {
@@ -520,7 +648,7 @@ async function coldBuild(t0) {
       return;
     }
     if (data.status === 'fresh') {
-      datasetStations = data.stations;
+      setDataset(data.stations, 'fresh', data.total_stations);
       const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
       showStatus(`✓ ${data.total_stations.toLocaleString()} stations · prices current`,
                                                                           'loading', true);
@@ -533,7 +661,7 @@ async function coldBuild(t0) {
     try {
       const c = await getCache();
       if (c.status !== 'empty') {
-        datasetStations = c.stations;
+        setDataset(c.stations, c.status, c.total_stations);
         const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
         showStatus(`✓ ${c.total_stations.toLocaleString()} stations`, 'loading', true);
         renderQuery(c.status === 'fresh' ? 'live' : `from ${ageText(c.ageMinutes)}`, elapsed);
@@ -552,9 +680,11 @@ async function backgroundRefresh() {
     let data = await runRefresh();
     if (data.status === 'refreshing') data = await pollUntilFresh();
     if (data && data.status === 'fresh' && data.stations) {
-      datasetStations = data.stations;
+      setDataset(data.stations, 'fresh', data.total_stations);
       renderQuery('updated just now', '');
-      showStatus('✓ Prices updated — now current', 'loading', true);
+      showStatus(currentQuery ? '✓ Prices updated — now current'
+                              : `✓ Prices ready · ${datasetTotal.toLocaleString()} stations`,
+                 'loading', true);
     }
   } catch(err) {
     showStatus('⚠️ Couldn\'t fetch the latest — showing recent prices', 'error', true);
@@ -592,7 +722,7 @@ if (searchHereBtn) {
     searchHereBtn.classList.add('hidden');
     mapMoved = false;
     // keepView = true, and filter by the whole visible rectangle (not a centre radius).
-    doSearch(centre.lat, centre.lng, null, false, null, true, bounds);
+    doSearch(centre.lat, centre.lng, null, { saveAsFav: false, keepView: true, bounds });
   });
 }
 
@@ -618,7 +748,7 @@ gpsBtn.addEventListener('click', () => {
   if (!navigator.geolocation) { showStatus('❌ Geolocation not supported', 'error', true); return; }
   showStatus('📍 Getting your location…');
   navigator.geolocation.getCurrentPosition(
-    pos => doSearch(pos.coords.latitude, pos.coords.longitude, null),
+    pos => doSearch(pos.coords.latitude, pos.coords.longitude, null, { isLive: true }),
     ()  => showStatus('❌ Location access denied', 'error', true)
   );
 });
@@ -641,7 +771,7 @@ resetProfileBtn.addEventListener('click', async () => {
     let data = await runRefresh();
     if (data.status === 'refreshing') data = await pollUntilFresh();
     if (data && data.status === 'fresh') {
-      datasetStations = data.stations;
+      setDataset(data.stations, 'fresh', data.total_stations);
       showStatus(`✓ Prices refreshed · ${data.total_stations.toLocaleString()} stations`,
                                                                           'loading', true);
       if (currentQuery) renderQuery('updated just now', '');
@@ -658,6 +788,9 @@ resetProfileBtn.addEventListener('click', async () => {
 // ── Init ──────────────────────────────────────────────────────────
 document.getElementById('app-version').textContent = APP_VERSION;
 updateFavBtn();
+
+// Start loading prices immediately - a search can then render straight from memory.
+prefetchPromise = prefetchPrices().finally(() => { prefetchPromise = null; });
 
 // Register the service worker so the app can be installed as a PWA.
 if ('serviceWorker' in navigator) {
