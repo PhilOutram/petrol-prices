@@ -113,6 +113,12 @@ price-coloured SVG markers (`priceColor` lerps green→orange→red by pence abo
 distance via haversine, and up-to-3 pinned favourites + a saved-search favourite, all in
 `localStorage` (`fuelscan_profile`, `fuelscan_favourite`, `fuelscan_pinned`).
 
+### Basemap
+Esri World Street Map (`World_Street_Map/MapServer`), free and keyless, chosen 2026-10-05 over the
+Esri Light Gray Canvas it replaced: colour, UK road numbers, labels baked into the tile (so no
+separate labels layer) and real tiles to zoom 19 rather than 16. CARTO's basemaps, used before
+that, now return a blank watermarked tile without an API key.
+
 ### Pages
 - `index.html` + `index.js` — the main app.
 - `check.html` + `check.js` — API diagnostic/inspection page.
