@@ -100,9 +100,13 @@ cache-independent way to probe the upstream API.
 The map shades everything **outside** the searched area (`drawSearchArea`: one world-sized polygon
 with the search circle, or the "Search here" rectangle, punched out of it with `fill-rule:evenodd`),
 and fits the view to that area rather than to the pins - otherwise its edge is off screen and a gap
-in the pins is ambiguous between "no stations" and "just outside the search". The location dot is
-blue only for a live GPS fix (`doSearch` opt `isLive`); a postcode, favourite or map centre gets a
-grey dot.
+in the pins is ambiguous between "no stations" and "just outside the search". There is **no dot at
+the search centre** - the shading shows that. The only dot is the blue live-location one
+(`showLivePosition` / `startLiveTracking`, v1.1.10), which follows the user via
+`geolocation.watchPosition` so a driver sees themselves move. Tracking starts only after the user
+presses 📍, or on load if `permissions.query` reports geolocation already `granted` - the app never
+raises a location prompt by itself. The marker outlives re-renders, and a fix arriving before the
+map exists is stashed in `lastLivePos` and replayed by `renderMap`.
 
 Other client concerns in `index.js`: postcode→lat/lng via `api.postcodes.io`, Leaflet map with
 price-coloured SVG markers (`priceColor` lerps green→orange→red by pence above cheapest),

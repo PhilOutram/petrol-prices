@@ -1,7 +1,7 @@
 // ================================================================
 // FuelScan — Main App
 // ================================================================
-const APP_VERSION    = 'v1.1.9';   // shown in the header; keep sw.js CACHE name in sync
+const APP_VERSION    = 'v1.1.10';   // shown in the header; keep sw.js CACHE name in sync
 const FAV_KEY        = 'fuelscan_favourite';
 const PINNED_KEY     = 'fuelscan_pinned';
 const FILL_LITRES    = 60;
@@ -27,10 +27,12 @@ const TILE_NATIVE_MAX = 16;   // deepest zoom Esri actually serves
 const MAP_MAX_ZOOM    = 17;   // one level of upscaled overzoom for picking out a forecourt
 const MAP_ATTRIBUTION = 'Tiles © Esri, HERE, Garmin, © OpenStreetMap contributors';
 
-// The "you are here" dot: blue only for a live GPS fix, grey for a spot the user chose
-// (postcode, favourite or map centre), so the dot never implies a location we don't have.
-const LIVE_DOT_COLOR   = '#2563eb';
-const PICKED_DOT_COLOR = '#6b7280';
+// The blue dot is where the user actually is, kept up to date as they move so someone driving
+// to a station can see themselves and the road they are on. There is no dot for the search
+// centre - the shaded area already shows where the search was.
+const LIVE_DOT_COLOR     = '#2563eb';
+const LIVE_FIX_MAX_AGE_MS = 10 * 1000;   // reuse a fix this recent instead of awaiting a new one
+const LIVE_FIX_TIMEOUT_MS = 20 * 1000;   // give up on a single fix after this long
 
 // Everything outside the searched area is dimmed, so a gap in the pins reads as "no stations
 // here" rather than "just outside the search".
@@ -67,7 +69,9 @@ const stationListEl   = document.getElementById('station-list');
 // ── State ─────────────────────────────────────────────────────────
 let leafletMap      = null;
 let mapMarkers      = [];
-let userMarker      = null;    // the "your location" dot — tracked so it can be replaced
+let liveMarker      = null;    // the blue "your location" dot, moved as new fixes arrive
+let liveWatchId     = null;    // navigator.geolocation watch, null when not tracking
+let lastLivePos     = null;    // most recent fix, replayed once the map exists
 let selectedNode    = null;    // node_id of the selected station (kept in sync: list/pin/summary)
 let lastStations    = [];      // filtered list currently shown (used by pin re-render)
 let lastLat         = null;
@@ -79,7 +83,7 @@ let datasetStatus   = null;    // 'fresh' | 'stale' - how the cache described th
 let datasetTotal    = 0;       // station count reported with it
 let datasetAt       = 0;       // when we loaded it, so a search can reuse it without re-reading
 let prefetchPromise = null;    // the startup load, so a search waits rather than re-fetching
-let currentQuery    = null;    // { lat, lng, radiusMiles, fuelType, postcode, saveAsFav, isLive }
+let currentQuery    = null;    // { lat, lng, radiusMiles, fuelType, postcode, saveAsFav }
 let refreshing      = false;   // true while a background/foreground refresh is in flight
 let searchAreaLayer = null;    // the shading outside the searched area
 
@@ -334,6 +338,36 @@ function makeMarkerIcon(price, cheapest, priciest, isPinned, isHighlighted) {
   });
 }
 
+// ── Live location dot ─────────────────────────────────────────────
+// Where the user actually is, following them as they move. Never started on its own: the app
+// only tracks once the user has asked for their location with 📍, or has already granted the
+// permission on an earlier visit, so loading the page never raises a location prompt.
+function showLivePosition(pos) {
+  lastLivePos = pos;
+  if (!leafletMap) return;             // no map yet - renderMap replays this fix when there is
+  const here = [pos.coords.latitude, pos.coords.longitude];
+  if (liveMarker) { liveMarker.setLatLng(here); return; }
+  const icon = L.divIcon({
+    html: `<div style="width:14px;height:14px;background:${LIVE_DOT_COLOR};border:3px solid white;
+                       border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>`,
+    className: '', iconSize: [14,14], iconAnchor: [7,7],
+  });
+  // zIndexOffset keeps the location dot above every station pin — Leaflet otherwise
+  // z-orders markers by latitude, which lets pins south of you bury the dot.
+  liveMarker = L.marker(here, { icon, zIndexOffset: USER_MARKER_Z })
+    .addTo(leafletMap)
+    .bindPopup('<strong>Your location</strong>');
+}
+
+function startLiveTracking() {
+  if (liveWatchId !== null || !navigator.geolocation) return;
+  liveWatchId = navigator.geolocation.watchPosition(showLivePosition, () => {}, {
+    enableHighAccuracy: true,
+    maximumAge:         LIVE_FIX_MAX_AGE_MS,
+    timeout:            LIVE_FIX_TIMEOUT_MS,
+  });
+}
+
 // Ring of points approximating a circle of `radiusMiles` around (lat,lng). Flat-earth maths
 // is plenty at these distances (the largest radius offered is 20 miles).
 function circleRing(lat, lng, radiusMiles) {
@@ -376,20 +410,9 @@ function renderMap(stations, lat, lng, fuelType, pinned, fitView = true) {
   // Shading outside the searched area, drawn before the pins so it sits under them.
   const ring = drawSearchArea(lat, lng, currentQuery?.radiusMiles, currentQuery?.bounds);
 
-  // User dot — remove the previous one first so they don't stack up across searches.
-  if (userMarker) userMarker.remove();
-  const isLive   = !!currentQuery?.isLive;
-  const dotColor = isLive ? LIVE_DOT_COLOR : PICKED_DOT_COLOR;
-  const userIcon = L.divIcon({
-    html: `<div style="width:14px;height:14px;background:${dotColor};border:3px solid white;
-                       border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>`,
-    className: '', iconSize: [14,14], iconAnchor: [7,7],
-  });
-  // zIndexOffset keeps the location dot above every station pin — Leaflet otherwise
-  // z-orders markers by latitude, which lets pins south of you bury the dot.
-  userMarker = L.marker([lat, lng], { icon: userIcon, zIndexOffset: USER_MARKER_Z })
-    .addTo(leafletMap)
-    .bindPopup(isLive ? '<strong>Your location</strong>' : '<strong>Search location</strong>');
+  // The live dot survives re-renders; replay the latest fix in case it arrived while the map
+  // was still hidden.
+  if (lastLivePos) showLivePosition(lastLivePos);
 
   stations.forEach(s => {
     const isPinned = pinnedIds.has(s.node_id);
@@ -557,15 +580,11 @@ function togglePin(nodeId) {
 }
 
 // ── Main search ───────────────────────────────────────────────────
-// opts.isLive is true only for a live GPS fix. A postcode, a favourite or the map centre is a
-// place the user picked, not where they are, so the dot is drawn grey instead of blue.
 async function doSearch(lat, lng, postcode, opts = {}) {
-  const { saveAsFav = true, overrideRadius = null, keepView = false, bounds = null,
-                                                                      isLive = false } = opts;
+  const { saveAsFav = true, overrideRadius = null, keepView = false, bounds = null } = opts;
   const radiusMiles = overrideRadius !== null ? overrideRadius : parseFloat(radiusSelect.value);
   const fuelType    = fuelSelect.value;
-  currentQuery = { lat, lng, radiusMiles, fuelType, postcode, saveAsFav, keepView, bounds,
-                                                                                      isLive };
+  currentQuery = { lat, lng, radiusMiles, fuelType, postcode, saveAsFav, keepView, bounds };
 
   lastLat = lat; lastLng = lng;
   mapMoved = false;
@@ -748,7 +767,11 @@ gpsBtn.addEventListener('click', () => {
   if (!navigator.geolocation) { showStatus('❌ Geolocation not supported', 'error', true); return; }
   showStatus('📍 Getting your location…');
   navigator.geolocation.getCurrentPosition(
-    pos => doSearch(pos.coords.latitude, pos.coords.longitude, null, { isLive: true }),
+    pos => {
+      showLivePosition(pos);
+      startLiveTracking();   // permission is granted now, so keep the dot following them
+      doSearch(pos.coords.latitude, pos.coords.longitude, null);
+    },
     ()  => showStatus('❌ Location access denied', 'error', true)
   );
 });
@@ -788,6 +811,12 @@ resetProfileBtn.addEventListener('click', async () => {
 // ── Init ──────────────────────────────────────────────────────────
 document.getElementById('app-version').textContent = APP_VERSION;
 updateFavBtn();
+
+// If location was already allowed on an earlier visit, start the dot now. This asks nothing:
+// querying the permission never prompts, and a 'prompt' or 'denied' state is left alone.
+navigator.permissions?.query({ name: 'geolocation' })
+  .then(p => { if (p.state === 'granted') startLiveTracking(); })
+  .catch(() => {});
 
 // Start loading prices immediately - a search can then render straight from memory.
 prefetchPromise = prefetchPrices().finally(() => { prefetchPromise = null; });
